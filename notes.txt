@@ -1,0 +1,3 @@
+pip install -e .
+
+from from above directory when dev
