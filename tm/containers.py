@@ -5,230 +5,168 @@ from abc import ABC, abstractmethod
 from typing import List, Union, Dict
 import copy
 import tqdm
-import tm
-from tm.constants import *
+#import tm
+#from tm.constants import *
 
-def find_prefix_view(arr, prefix):
-    # Find all indexes where elements start with the given prefix
-    mask = np.char.startswith(arr, prefix)
-    # Get the first and last index where the prefix appears
-    indices = np.flatnonzero(mask)
-    if indices.size > 0:
-        start, end = indices[0], indices[-1] + 1  # Inclusive range
-        return slice(start, end)    
-    return None  # Return None array if no matches
 
 def datetime_to_int(index: pd.DatetimeIndex):
-    # Convert DatetimeIndex to Unix timestamps.
-    return index.view(np.int64) // 10 ** 9
+    return index.view(np.int64) // 10**9
 
 def int_to_datetime(ts):
-    return pd.to_datetime(ts * 10 ** 9)
+    return pd.to_datetime(ts * 10**9)
+
+def contiguous_prefix_slices(columns: np.ndarray) -> Dict[str, slice]:
+    prefixes = [''.join(filter(str.isalpha, name)) for name in columns]
+    result = {}
+    i = 0
+    while i < len(columns):
+        prefix = prefixes[i]
+        start = i
+        while i < len(columns) and prefixes[i] == prefix:
+            i += 1
+        result[prefix] = slice(start, i)
+    return result
 
 class Data:
-    def __init__(
-                self, 
-                ts:np.ndarray, 
-                y:np.ndarray, 
-                s:np.ndarray = None, 
-                x:np.ndarray = None, 
-                z:np.ndarray = None, 
-                t:np.ndarray = None, 
-                msidx:np.ndarray = None, 
-                pw:np.ndarray = None, 
-                w:np.ndarray = None,
-                y_cols:np.ndarray = np.array([]),
-                x_cols:np.ndarray = None,
-                t_cols:np.ndarray = None,  
-                w_cols:np.ndarray = None              
-                ):        
+    def __init__(self, 
+                 ts, y, s=None, x=None, z=None, t=None,
+                 msidx=None, pw=None, w=None,
+                 y_cols=np.array([]), x_cols=None, t_cols=None, w_cols=None):
+        
         self.ts = ts
         self.y = y
         self.x = x
         self.z = z
         self.t = t
-        self.msidx = msidx
-        self.msidx_start = None
-        self.msidx_start_lookup = None
-        self.s = s
-        self.pw = pw
-        self.w = w
+        self.s = np.zeros(len(ts)) if s is None else s
+        self.pw = np.ones(len(ts)) if pw is None else pw
+        self.w = np.zeros((y.shape[0], y.shape[1])) if w is None else w
+        self.msidx = np.zeros(len(ts), dtype=int) if msidx is None else msidx
+
         self.y_cols = y_cols
         self.x_cols = x_cols
         self.t_cols = t_cols
+        self.w_cols = w_cols if w_cols is not None else np.array([f"w_{e}" for e in y_cols])
 
-        assert y.ndim == 2, "y must be a matrix"
         self.n, self.p = self.y.shape
-
-        # check inputs
-        if self.msidx is None:
-            self.msidx = np.zeros(self.n, dtype = int)
-        
-        # fix msidx
+        self.msidx_start = None
+        self.msidx_start_lookup = None
         self._process_msidx()
 
-        if w_cols is None:
-            self.w_cols = np.array([f"w_{e}" for e in self.y_cols])
-        else:
-            self.w_cols = w_cols
-
-        if self.w is None:
-            self.w = np.zeros((self.n, self.p))
-        if self.pw is None:
-            self.pw = np.ones(self.n)
-        if self.s is None:
-            self.s = np.zeros(self.n)
-
     def _process_msidx(self):
-        #
-        # this needs to create a new copy
-        if not self.empty:
+        if self.empty:
+            self.msidx_start = np.array([0])
+        else:
             diff = np.diff(self.msidx, prepend=self.msidx[0])
             change = (diff != 0).astype(int)
-            self.msidx = np.cumsum(change) # store in the same array without creating a new one                    
-            # compute starts
+            self.msidx = np.cumsum(change)
             mask = np.r_[True, self.msidx[1:] != self.msidx[:-1]]
-            self.msidx_start = np.where(mask)[0]        
-
-        else:
-            self.msidx_start = np.array([0])
-            
+            self.msidx_start = np.where(mask)[0]
         self.msidx_start_lookup = self.msidx_start[np.searchsorted(self.msidx_start, np.arange(self.n+1), side='right') - 1]
-
-        return self
 
     @property
     def empty(self):
         return self.n == 0
 
-    def to_df(self):
-        v = [self.y]
-        c = list(self.y_cols)
-        if self.x is not None:
-            v.append(self.x)
-            c += list(self.x_cols)
-        if self.z is not None:
-            v.append(self.z)
-            c += ['z']
-        if self.t is not None:
-            v.append(self.t)
-            c += list(self.t_cols)
-        v += [self.msidx, self.s, self.pw, self.w]
-        c += ['msidx', 's', 'pw'] + list(self.w_cols)
-        v = np.hstack([np.atleast_2d(e.T).T for e in v])
-        return pd.DataFrame(v, columns = c, index = self.index())
-    
-    def __repr__(self):
-        return self.to_df().__repr__()
-
     def index(self):
         return int_to_datetime(self.ts)
 
+    def to_df(self):
+        v, c = [], []
+
+        def add_field(field, names):
+            if field is not None:
+                v.append(np.atleast_2d(field.T).T)
+                c.extend(names)
+
+        add_field(self.y, self.y_cols)
+        add_field(self.x, self.x_cols)
+        add_field(self.z, ['z'] if self.z is not None else [])
+        add_field(self.t, self.t_cols)
+        add_field(self.msidx, ['msidx'])
+        add_field(self.s, ['s'])
+        add_field(self.pw, ['pw'])
+        add_field(self.w, self.w_cols)
+
+        return pd.DataFrame(np.hstack(v), columns=c, index=self.index())
+
+    def __repr__(self):
+        return self.to_df().__repr__()
+
     @classmethod
     def from_df(cls, df: pd.DataFrame):
-
         df.index = pd.to_datetime(df.index)
-        
-        columns = np.array(list(df.columns))
-        # create variables
-        # ts
         ts = datetime_to_int(df.index)
-        # y
-        tmp = find_prefix_view(columns, Y)
-        assert tmp, "y must be present"
-        y = np.array(df.values[:, tmp], dtype = np.float64)
-        y_cols = columns[tmp]
+        
+        # Sort columns by prefix to ensure contiguous slices
+        def extract_prefix(name):
+            return ''.join(filter(str.isalpha, name))
+        df = df[sorted(df.columns, key=extract_prefix)]
 
-        # x
-        x = None
-        x_cols = None
-        tmp = find_prefix_view(columns, X)
-        if tmp:
-            x = np.array(df.values[:, tmp], dtype = np.float64)
-            x_cols = columns[tmp]
+        columns = np.array(df.columns)
+        prefix_slices = contiguous_prefix_slices(columns)
 
-        # z (vector)
-        z = None
-        tmp = find_prefix_view(columns, Z)
-        if tmp:
-            z = np.array(df.values[:, tmp.start], dtype = np.int64)
+        y = df.values[:, prefix_slices['y']]
+        y_cols = columns[prefix_slices['y']]
 
-        # t 
-        t = None
-        t_cols = None
-        tmp = find_prefix_view(columns, T)
+        x = x_cols = t = t_cols = z = msidx = None
 
-        if tmp:
-            t = np.array(df.values[:, tmp], dtype = np.float64)
-            t_cols = columns[tmp]
+        if 'x' in prefix_slices:
+            x = df.values[:, prefix_slices['x']]
+            x_cols = columns[prefix_slices['x']]
+        if 't' in prefix_slices:
+            t = df.values[:, prefix_slices['t']]
+            t_cols = columns[prefix_slices['t']]
+        if 'z' in prefix_slices:
+            z = df.values[:, prefix_slices['z']][:, 0]
+        if 'msidx' in prefix_slices:
+            msidx = df.values[:, prefix_slices['msidx'].start]
 
-        # msidx (vector)
-        msidx = None
-        tmp = find_prefix_view(columns, MSIDX)
-        if tmp:
-            msidx = df.values[:, tmp.start]
-        return cls(ts = ts, y = y, x = x, z = z, t = t, msidx = msidx, y_cols = y_cols, x_cols = x_cols, t_cols = t_cols)
+        return cls(ts=ts, y=y, x=x, z=z, t=t, msidx=msidx,
+                   y_cols=y_cols, x_cols=x_cols, t_cols=t_cols)
 
     def __getitem__(self, idx):
-        # Support tuple indexing: if a tuple is provided, use its first element for row slicing.
         if isinstance(idx, tuple):
             idx = idx[0]
-
         return Data(
-                    ts = self.ts[idx], 
-                    y = self.y[idx], 
-                    x = self.x[idx] if self.x is not None else None, 
-                    z = self.z[idx] if self.z is not None else None, 
-                    t = self.t[idx] if self.t is not None else None, 
-                    s = self.s[idx],
-                    pw = self.pw[idx],
-                    w = self.w[idx],
-                    msidx = self.msidx[idx], 
-                    y_cols = self.y_cols, 
-                    x_cols = self.x_cols, 
-                    t_cols = self.t_cols,
-                    w_cols = self.w_cols
-                    )
+            ts=self.ts[idx], y=self.y[idx],
+            x=self.x[idx] if self.x is not None else None,
+            z=self.z[idx] if self.z is not None else None,
+            t=self.t[idx] if self.t is not None else None,
+            s=self.s[idx], pw=self.pw[idx], w=self.w[idx],
+            msidx=self.msidx[idx],
+            y_cols=self.y_cols, x_cols=self.x_cols,
+            t_cols=self.t_cols, w_cols=self.w_cols)
 
     def copy(self):
-        """
-        Return a deep copy of the Data instance.
-        Use this method when you need an independent copy of the data.
-        """
         return copy.deepcopy(self)
 
     def after(self, ts: int):
         if self.n == 0:
             return self
-        condition = np.where(self.ts > ts)[0]
-        if condition.size:
-            return self[condition[0]:] # we can use simple indexing here
-        else:
-            return self[:0]
+        idx = np.searchsorted(self.ts, ts, side='right')
+        return self[idx:] if idx < self.n else self[:0]
 
     def before(self, ts: int):
         if self.n == 0:
             return self
-        condition = np.where(self.ts < ts)[0]
-        if condition.size:
-            return self[:condition[-1]+1] # we can use simple indexing here
-        else:
-            return self[:0]
+        idx = np.searchsorted(self.ts, ts, side='left')
+        return self[:idx] if idx > 0 else self[:0]
 
     def between(self, ts_lower: int, ts_upper: int):
         if self.n == 0:
             return self
-        condition = np.where((self.ts >= ts_lower) & (self.ts <= ts_upper))[0]
-        if condition.size:
-            return self[condition[0]:condition[-1]+1] # we can use simple indexing here
-        else:
+        mask = (self.ts >= ts_lower) & (self.ts <= ts_upper)
+        if not mask.any():
             return self[:0]
+        first, last = np.where(mask)[0][[0, -1]]
+        return self[first:last+1]
 
     def random_segment(self, burn_fraction: float, min_burn_points: int):
         if self.n == 0:
             return self
-        start = np.random.randint(max(min_burn_points, 1), max(int(self.n * burn_fraction), min_burn_points + 1))
-        end = np.random.randint(max(min_burn_points, 1), max(int(self.n * burn_fraction), min_burn_points + 1))
+        start = np.random.randint(min_burn_points, max(int(self.n * burn_fraction), min_burn_points + 1))
+        end = np.random.randint(min_burn_points, max(int(self.n * burn_fraction), min_burn_points + 1))
         return self[start:self.n - end]
 
     def stack(self, data: 'Data', allow_both_empty: bool = False):
@@ -239,17 +177,13 @@ class Data:
         if self.n == 0:
             vars(self).update(vars(data))
             return self
-
         if data.n == 0:
             return self
-        
-        # ts is not stacked as this is used to concat training data
-        self.ts = np.hstack((self.ts,data.ts))
-        
-        self.y = np.vstack((self.y, data.y))             
-        
+
+        self.ts = np.hstack((self.ts, data.ts))
+        self.y = np.vstack((self.y, data.y))
         if self.x is not None:
-            self.x = np.vstack((self.x, data.x))             
+            self.x = np.vstack((self.x, data.x))
         if self.t is not None:
             self.t = np.vstack((self.t, data.t))
         if self.z is not None:
@@ -259,45 +193,34 @@ class Data:
         self.pw = np.hstack((self.pw, data.pw))
         self.w = np.vstack((self.w, data.w))
 
-        # stack msidx
         offset = self.msidx[-1] - data.msidx[0] + 1
         self.msidx = np.hstack((self.msidx, data.msidx + offset))
+
         self.n, self.p = self.y.shape
-        # process again..
         self._process_msidx()
-        return self     
+        return self
 
     def as_dict(self):
-        #  
-        return {'y':self.y, 'x':self.x, 't':self.t, 'z':self.z, 'msidx':self.msidx}
+        return {'y': self.y, 'x': self.x, 't': self.t, 'z': self.z, 'msidx': self.msidx}
 
     def input_at(self, idx: int = None):
         if idx is None:
             idx = self.n - 1
-        # (!) idx should be 0 <= idx <= n-1
-        start = self.msidx_start_lookup[idx] 
+        start = self.msidx_start_lookup[idx]
         return {
-                'y':self.y[start: idx + 1], 
-                'x':self.x[start: idx + 1] if self.x is not None else None, 
-                't':self.t[start: idx + 1] if self.t is not None else None, 
-                'z':self.z[start: idx + 1] if self.z is not None else None,
-                'msidx':self.msidx[start: idx + 1], 
-                }
-        
+            'y': self.y[start:idx+1],
+            'x': self.x[start:idx+1] if self.x is not None else None,
+            't': self.t[start:idx+1] if self.t is not None else None,
+            'z': self.z[start:idx+1] if self.z is not None else None,
+            'msidx': self.msidx[start:idx+1]
+        }
+
     def at(self, idx: int = None):
-        """
-        Return the most recent subsequence at index idx
-        If idx is None, use the last observation.
-        Note: This uses the new tuple-indexing feature so you can write:
-              return self[start, idx+1]
-        """
         if idx is None:
             idx = self.n - 1
-        
-        #valid_starts = self.msidx_start[self.msidx_start <= idx]
-        #start = valid_starts[-1] if valid_starts.size > 0 else 0
-        start = self.msidx_start_lookup[idx] 
-        return self[start: idx + 1]
+        start = self.msidx_start_lookup[idx]
+        return self[start:idx+1]
+
 
 # dict of Data with properties
 class Dataset(dict):
@@ -346,7 +269,7 @@ class Dataset(dict):
         
         if seq_path and test_fold_idx == 0:
             raise ValueError("Cannot start at fold 0 when path is sequential")
-        if len(self.folds_ts) is None:
+        if self.folds_ts is None:
             raise ValueError("Need to split before getting the split")
         
         train_dataset = Dataset()
@@ -374,6 +297,9 @@ class Dataset(dict):
 
 if __name__ == '__main__':
 
+
+    import tm
+
     def linear(n=1000,a=0,b=0.1, scale = 0.01,start_date='2000-01-01'):
         x=np.random.normal(0,scale,n)
         y=a+b*x+np.random.normal(0,scale,n)
@@ -383,7 +309,7 @@ if __name__ == '__main__':
 
     df1 = linear(n=10, a=0, b=0.1, start_date='2000-01-01')
     df2 = linear(n=10, a=0, b=0.1, start_date='2000-01-01')
-    
+    df1['msidx'] = 666
     data1 = Data.from_df(df1)
     data2 = Data.from_df(df2)
     data1.stack(data2)
@@ -398,7 +324,7 @@ if __name__ == '__main__':
     print()
     print(data1.msidx)
 
-    t = trdm.utils.msidx_to_table(data1.msidx)
+    t = tm.utils.msidx_to_table(data1.msidx)
     print()
     print(t)
     for i in range(t.shape[0]):
