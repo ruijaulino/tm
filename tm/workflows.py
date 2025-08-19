@@ -385,8 +385,8 @@ def load_model_pipe(filepath):
 
 # changes dataset in place
 def cvbt_path(
-            dataset:Dataset, 
-            model_pipe:Union[ModelPipeContainer,ModelPipe],
+            dataset:Union[Data, Dataset], 
+            model_pipe:Union[ModelPipeContainer, ModelPipe],
             k_folds:int = 4, 
             seq_path:bool = False, 
             start_fold:int = 0, 
@@ -426,7 +426,7 @@ def cvbt_path(
     return dataset    
 
 def cvbt(
-        dataset:Dataset, 
+        dataset:Union[Dataset,Data], 
         model_pipe:Union[ModelPipeContainer,ModelPipe],
         n_paths: int = 5,
         k_folds:int = 4, 

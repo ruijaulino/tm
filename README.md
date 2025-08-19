@@ -1,3 +1,3 @@
 # tm
 
-A library to evaluate and deply trading models.
+A library to estimate, evaluate and deploy machine learning trading models.

@@ -5,8 +5,7 @@ from abc import ABC, abstractmethod
 from typing import List, Union, Dict
 import copy
 import tqdm
-#import tm
-#from tm.constants import *
+from tm.constants import *
 
 
 def datetime_to_int(index: pd.DatetimeIndex):
@@ -46,7 +45,7 @@ class Data:
         self.y_cols = y_cols
         self.x_cols = x_cols
         self.t_cols = t_cols
-        self.w_cols = w_cols if w_cols is not None else np.array([f"w_{e}" for e in y_cols])
+        self.w_cols = w_cols if w_cols is not None else np.array([f"{W}_{e}" for e in y_cols])
 
         self.n, self.p = self.y.shape
         self.msidx_start = None
@@ -81,11 +80,11 @@ class Data:
 
         add_field(self.y, self.y_cols)
         add_field(self.x, self.x_cols)
-        add_field(self.z, ['z'] if self.z is not None else [])
+        add_field(self.z, [Z] if self.z is not None else [])
         add_field(self.t, self.t_cols)
-        add_field(self.msidx, ['msidx'])
-        add_field(self.s, ['s'])
-        add_field(self.pw, ['pw'])
+        add_field(self.msidx, [MSIDX])
+        add_field(self.s, [S])
+        add_field(self.pw, [PW])
         add_field(self.w, self.w_cols)
 
         return pd.DataFrame(np.hstack(v), columns=c, index=self.index())
@@ -106,21 +105,21 @@ class Data:
         columns = np.array(df.columns)
         prefix_slices = contiguous_prefix_slices(columns)
 
-        y = df.values[:, prefix_slices['y']]
-        y_cols = columns[prefix_slices['y']]
+        y = df.values[:, prefix_slices[Y]]
+        y_cols = columns[prefix_slices[Y]]
 
         x = x_cols = t = t_cols = z = msidx = None
 
-        if 'x' in prefix_slices:
-            x = df.values[:, prefix_slices['x']]
-            x_cols = columns[prefix_slices['x']]
-        if 't' in prefix_slices:
-            t = df.values[:, prefix_slices['t']]
-            t_cols = columns[prefix_slices['t']]
-        if 'z' in prefix_slices:
-            z = df.values[:, prefix_slices['z']][:, 0]
-        if 'msidx' in prefix_slices:
-            msidx = df.values[:, prefix_slices['msidx'].start]
+        if X in prefix_slices:
+            x = df.values[:, prefix_slices[X]]
+            x_cols = columns[prefix_slices[X]]
+        if T in prefix_slices:
+            t = df.values[:, prefix_slices[T]]
+            t_cols = columns[prefix_slices[T]]
+        if Z in prefix_slices:
+            z = df.values[:, prefix_slices[Z]][:, 0]
+        if MSIDX in prefix_slices:
+            msidx = df.values[:, prefix_slices[MSIDX].start]
 
         return cls(ts=ts, y=y, x=x, z=z, t=t, msidx=msidx,
                    y_cols=y_cols, x_cols=x_cols, t_cols=t_cols)
