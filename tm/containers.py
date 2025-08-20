@@ -7,6 +7,11 @@ import copy
 import tqdm
 from tm.constants import *
 
+def split_ts(ts, k_folds=4):
+    # join all ts arrays, compute unique values
+    # and split array
+    idx_folds = np.array_split(ts, k_folds)
+    return [(fold[0], fold[-1]) for fold in idx_folds]
 
 def datetime_to_int(index: pd.DatetimeIndex):
     return index.view(np.int64) // 10**9
@@ -50,8 +55,44 @@ class Data:
         self.n, self.p = self.y.shape
         self.msidx_start = None
         self.msidx_start_lookup = None
+        self.folds_ts = None
         self._process_msidx()
 
+    
+    def split_ts(self, k_folds, **kwargs):
+        self.folds_ts = split_ts(self.ts, k_folds = k_folds)
+
+
+    def split(
+            self, 
+            test_fold_idx: int, 
+            burn_fraction: float = 0.1, 
+            min_burn_points: int = 1, 
+            seq_path: bool = False,
+            folds_ts: list = None,
+            **kwargs
+            ):
+        
+        if seq_path and test_fold_idx == 0:
+            raise ValueError("Cannot start at fold 0 when path is sequential")
+        folds_ts = self.folds_ts if folds_ts is None else folds_ts
+        if folds_ts is None:            
+            raise ValueError("Need to split before getting the split")
+        
+        ts_lower, ts_upper = folds_ts[test_fold_idx]            
+        
+        # get test data
+        test_data = self.between(ts_lower, ts_upper)
+
+        # create training data
+        train_data = self.before(ts = ts_lower).random_segment(burn_fraction, min_burn_points)
+        # if path is non sequential add data after the test set
+        if not seq_path:
+            train_data_add = self.after(ts = ts_upper).random_segment(burn_fraction, min_burn_points)
+            train_data.stack(train_data_add, allow_both_empty = True)
+
+        return train_data, test_data
+        
     def _process_msidx(self):
         if self.empty:
             self.msidx_start = np.array([0])
@@ -254,8 +295,8 @@ class Dataset(dict):
             ts.append(data.ts)
         ts = np.hstack(ts)
         ts = np.unique(ts)
-        idx_folds = np.array_split(ts, k_folds)
-        self.folds_ts = [(fold[0], fold[-1]) for fold in idx_folds]
+        ts.sort()            
+        self.folds_ts = split_ts(ts, k_folds=4)
         return self
 
     def split(
@@ -275,19 +316,13 @@ class Dataset(dict):
         test_dataset = Dataset()
 
         for key, data in self.items():
-
-            ts_lower, ts_upper = self.folds_ts[test_fold_idx]            
-            
-            # get test data
-            test_data = data.between(ts_lower, ts_upper)
-
-            # create training data
-            train_data = data.before(ts = ts_lower).random_segment(burn_fraction, min_burn_points)
-            # if path is non sequential add data after the test set
-            if not seq_path:
-                train_data_add = data.after(ts = ts_upper).random_segment(burn_fraction, min_burn_points)
-                train_data.stack(train_data_add, allow_both_empty = True)
-                        
+            train_data, test_data = data.split(
+                                                test_fold_idx = test_fold_idx,
+                                                burn_fraction = burn_fraction,
+                                                min_burn_points = min_burn_points,
+                                                seq_path = seq_path,
+                                                folds_ts = self.folds_ts
+                                                )
             train_dataset.add(key, train_data)
             test_dataset.add(key, test_data)    
         

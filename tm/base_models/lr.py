@@ -1,7 +1,7 @@
 import numpy as np
-from tm.models.abstract import Model
+from tm.base_models.base_model import BaseModel
 
-class LR(Model):
+class LR(BaseModel):
     def __init__(self, kelly_std:float = 2, max_w:float = 1, bias_reduction:float = 0, m2:bool = True):
         self.kelly_std = kelly_std
         self.max_w = max_w

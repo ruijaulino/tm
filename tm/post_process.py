@@ -1,7 +1,8 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from tm.containers import Dataset
+from typing import List, Union, Dict
+from tm.containers import Data, Dataset
 from tm.constants import *
 
 
@@ -120,17 +121,23 @@ def performance_summary(s, sr_mult, pct_fee = 0):
 # to be used as results from cvbt
 class Paths(list):
     
-    def add(self, dataset:Dataset):
-        self.append(dataset)
+    def add(self, dataset:Union[Data, Dataset]):
+        
+        # convert into a dataset to make the code easier!
+        if isinstance(dataset, Data):
+            tmp = Dataset()
+            tmp.add('data', dataset)
+            self.append(tmp)
+        else:
+            self.append(tmp)
 
     # add post process methods
     def post_process(self, pct_fee = 0., seq_fees = False, sr_mult = np.sqrt(250), n_boot = 1000, key = None, start_date = '', end_date = ''):
 
-        # paths = filter_paths(paths,start_date,end_date)
-
         if len(self) == 0:
             print('No paths to process!')
             return
+        
         
         keys = list(self[0].keys())
 
@@ -173,6 +180,7 @@ class Paths(list):
 
     def portfolio_post_process(self, pct_fee = 0., seq_fees = False, sr_mult = np.sqrt(250), n_boot = 1000, view_weights = True, use_pw = True, multiplier = 1, start_date = '', end_date = ''):
      
+    
         if len(self) == 0:
             print('No paths to process!')
             return

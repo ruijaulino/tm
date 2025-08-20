@@ -1,4 +1,4 @@
-from .abstract import Model
+from .base_model import BaseModel
 from .lr import LR
 from .bayes_lr import BayesLinRegr, RollVarBayesLinRegr
 from .state_gaussian import StateGaussian

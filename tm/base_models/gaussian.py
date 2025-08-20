@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import sys
-from tm.models.abstract import Model
+from tm.base_models.base_model import BaseModel
 
 
 class Gaussian(object):

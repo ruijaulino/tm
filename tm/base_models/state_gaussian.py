@@ -1,11 +1,9 @@
 import numpy as np
-import copy
-from tm.models.abstract import Model
+from tm.base_models.base_model import BaseModel
 
-class StateModel(Model):
-    def __init__(self, base_model, min_points = 10, zero_states = []):
+class StateGaussian(BaseModel):
+    def __init__(self, min_points = 10, zero_states = []):
         self.min_points = min_points
-        self.base_model = base_model
         self.states_distribution = {}
         self.zero_states = zero_states
         self.default_mean = 0

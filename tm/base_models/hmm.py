@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from tm.models.abstract import Model
+from tm.base_models.base_model import BaseModel
 from numba import jit
 from abc import ABC, abstractmethod
 from typing import List, Union, Dict
@@ -116,7 +116,7 @@ class HMMEmissions(ABC):
         """Subclasses must implement this method"""
         pass        
         
-class HMM(Model):
+class HMM(BaseModel):
     def __init__(
                 self,
                 emissions:HMMEmissions,

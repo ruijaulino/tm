@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from tm.models.abstract import Model
+from tm.base_models import BaseModel
 import tm
 
 # numerical routines for bayesian linear regression
@@ -19,38 +19,42 @@ class CoreBayesLinRegr:
         # to be computed
         self.w, self.b, self.a, self.S = None, None, None, None
 
-    def view(self):
+    def view(self, plot = False, **kwargs):
         print('** Bayes Linear Regression **')
         print('Weights: ', self.w)
         print('Precision: ', self.b)
         print('Variance: ', 1/self.b)
         print('Scale: ', 1/np.sqrt(self.b))
         print('Prior precision: ', self.a)
-        plt.title('Weights')
-        plt.plot(self.w)
-        plt.grid(True)
-        plt.show()
+        
 
-        if self.ard:
-            plt.title('Priors')
-            plt.plot(1 / self.a)
+        if plot:
+
+            plt.title('Weights')
+            plt.plot(self.w)
             plt.grid(True)
             plt.show()
-            plt.title('Prior precision convergence')
-            for i in range(self.eb_a.shape[1]):
-                plt.plot(np.log(self.eb_a[:,i]), label = f'variable {i}')
+
+            if self.ard:
+                plt.title('Priors')
+                plt.plot(1 / self.a)
+                plt.grid(True)
+                plt.show()
+                plt.title('Prior precision convergence')
+                for i in range(self.eb_a.shape[1]):
+                    plt.plot(np.log(self.eb_a[:,i]), label = f'variable {i}')
+                plt.grid(True)
+                plt.legend()
+                plt.show()
+            else:
+                plt.title('Prior precision convergence')
+                plt.plot(self.eb_a)
+                plt.grid(True)
+                plt.show()                    
+            plt.title('Precision convergence')
+            plt.plot(self.eb_b)
             plt.grid(True)
-            plt.legend()
-            plt.show()
-        else:
-            plt.title('Prior precision convergence')
-            plt.plot(self.eb_a)
-            plt.grid(True)
-            plt.show()                    
-        plt.title('Precision convergence')
-        plt.plot(self.eb_b)
-        plt.grid(True)
-        plt.show()    
+            plt.show()    
         return self
         
     def estimate(self, y, x, v = None, **kwargs):
@@ -170,7 +174,7 @@ class CoreBayesLinRegr:
             v = 1 / self.b + np.einsum('ij,jk,ik->i', x, self.S, x)
         return m, v
 
-class BayesLinRegr(Model):
+class BayesLinRegr(BaseModel):
     def __init__(self, 
                  w_quantile:float = 0.9, 
                  max_w:float = 1, 
@@ -187,45 +191,39 @@ class BayesLinRegr(Model):
         self.w_norm = 1
         self.post_w_norm = post_w_norm
 
-    def posterior_predictive(self, xq, **kwargs):
-        '''
-        approximate with normal
-        '''
-        if self.intercept: xq = np.hstack((1, xq))
-        mean = np.dot(self.w, xq)
-        var = 1/self.b + np.dot(xq, np.dot(self.S, xq))
-        return mean, var
-    
-    def get_weight(self, xq, **kwargs):
-        if not isinstance(xq, np.ndarray):
-            xq = np.array(xq)
-        xq = np.atleast_2d(xq)                
-        m, v = self.core_regr.posterior_predictive(xq)
-        w = m / (v + m*m)
-        w /= self.w_norm
-        idx = np.abs(w) > self.max_w
-        w[idx] = np.sign(w[idx])*self.max_w
-        return w[-1]        
-
-    def _evaluate(self, x, **kwargs):
-        m, v = self.core_regr.posterior_predictive(x)
-        w = m / (v + m*m)
-        w /= self.w_norm
-        idx = np.abs(w) > self.max_w
-        w[idx] = np.sign(w[idx])*self.max_w
-        return np.atleast_2d(w.T).T        
-        
-    def view(self):
-        self.core_regr.view()
+    def view(self, plot = False, **kwargs):
+        self.core_regr.view(plot = plot)
 
     def estimate(self, y, x, **kwargs):        
         # base model estimate
         self.core_regr.estimate(y = y, x = x)
-        # weights normalizer!
+        
+    def posterior_predictive(self, x, **kwargs):
+        '''
+        approximate with normal
+        '''
         m, v = self.core_regr.posterior_predictive(x)
-        w = m / (v + m*m)
-        self.w_norm = np.quantile(np.abs(w), self.w_quantile)
+        return m, v
 
+    #def get_weight(self, xq, **kwargs):
+    #    if not isinstance(xq, np.ndarray):
+    #        xq = np.array(xq)
+    #    xq = np.atleast_2d(xq)                
+    #    m, v = self.core_regr.posterior_predictive(xq)
+    #    w = m / (v + m*m)
+    #    w /= self.w_norm
+    #    idx = np.abs(w) > self.max_w
+    #    w[idx] = np.sign(w[idx])*self.max_w
+    #    return w[-1]        
+
+    #def _evaluate(self, x, **kwargs):
+    #    m, v = self.core_regr.posterior_predictive(x)
+    #    w = m / (v + m*m)
+    #    w /= self.w_norm
+    #    idx = np.abs(w) > self.max_w
+    #    w[idx] = np.sign(w[idx])*self.max_w
+    #    return np.atleast_2d(w.T).T        
+        
     def post_estimate(self, y, x, **kwargs):
         if self.post_w_norm:
             m, v = self.core_regr.posterior_predictive(x)

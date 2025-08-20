@@ -10,6 +10,8 @@ MSIDX = 'msidx' # multisequence index
 S = 's' # strategy returns
 PW = 'pw' # portfolio weight
 W = 'w' # weight
+Y_LIVE_VALUE = -1
+T_LIVE_VALUE = -1
 
 
 
