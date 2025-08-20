@@ -1,6 +1,35 @@
+from __future__ import annotations
+
 from tm.containers import Dataset
-from tm.workflows import EnsembleModel, ModelPipeContainer, cvbt_path
+from abc import ABC, abstractmethod
 import numpy as np
+
+from tm.workflows import cvbt_path
+
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from tm.model import ModelSet
+    
+class EnsembleModel(ABC):
+
+    @abstractmethod
+    def estimate(self, dataset:Dataset, model_set:ModelSet):
+        """Subclasses must implement this method"""
+        # it should estimate a number to attribute to each key in dataset accessible with .get method
+        # cvbt_path()
+        pass
+
+    @abstractmethod
+    def get(self, key:str) -> float:
+        """Subclasses must implement this method"""
+        # returns the portfolio weight for a key
+        pass
+
+    def view(self):
+        print("EnsembleModel")
+        for k, v in self.pws.items():
+            print(f'Portfolio Weight for {k} = {v}')
+
 
 
 class IdleEnsembleModel(EnsembleModel):
@@ -10,7 +39,7 @@ class IdleEnsembleModel(EnsembleModel):
         self.normalize = normalize
         self.pws = {}
 
-    def estimate(self, dataset:Dataset, model_pipe_container:ModelPipeContainer):
+    def estimate(self, dataset:Dataset, model_set:ModelSet):
         """Subclasses must implement this method"""
         # it should estimate a number to attribute to each key in dataset accessible with .get method
         # cvbt_path()
@@ -29,7 +58,7 @@ class InvVolEnsembleModel(EnsembleModel):
     def __init__(self):
         self.pws = {}
 
-    def estimate(self, dataset:Dataset, model_pipe_container:ModelPipeContainer):
+    def estimate(self, dataset:Dataset, model_set:ModelSet):
         """Subclasses must implement this method"""
         # it should estimate a number to attribute to each key in dataset accessible with .get method
         # cvbt_path()
@@ -76,7 +105,7 @@ class InvVolStratFilterEnsembleModel(EnsembleModel):
         else:
             raise Exception('Unknown strat_filter_statistic')
 
-    def estimate(self, dataset:Dataset, model_pipe_container:ModelPipeContainer):
+    def estimate(self, dataset:Dataset, model_set:ModelSet):
         """Subclasses must implement this method"""
         # it should estimate a number to attribute to each key in dataset accessible with .get method
         # cvbt_path()
@@ -84,7 +113,7 @@ class InvVolStratFilterEnsembleModel(EnsembleModel):
         # maybe copies not necessary
         dataset_ = cvbt_path(
                     dataset = dataset.copy(), 
-                    model_pipe = model_pipe_container.copy(),
+                    model_pipe = model_set.copy(),
                     k_folds = self.k_folds, 
                     seq_path = self.seq_path, 
                     start_fold = 0, 
@@ -141,7 +170,7 @@ class EqWStratFilterEnsembleModel(EnsembleModel):
         else:
             raise Exception('Unknown strat_filter_statistic')
 
-    def estimate(self, dataset:Dataset, model_pipe_container:ModelPipeContainer):
+    def estimate(self, dataset:Dataset, model_set:ModelSet):
         """Subclasses must implement this method"""
         # it should estimate a number to attribute to each key in dataset accessible with .get method
         # cvbt_path()
@@ -149,7 +178,7 @@ class EqWStratFilterEnsembleModel(EnsembleModel):
         # maybe copies not necessary
         dataset_ = cvbt_path(
                     dataset = dataset.copy(), 
-                    model_pipe = model_pipe_container.copy(),
+                    model_pipe = model_set.copy(),
                     k_folds = self.k_folds, 
                     seq_path = self.seq_path, 
                     start_fold = 0, 
@@ -225,7 +254,7 @@ class StratStatEnsembleModel(EnsembleModel):
             return np.mean(s) - 0.5*np.mean(np.power(s, 2))
 
 
-    def estimate(self, dataset:Dataset, model_pipe_container:ModelPipeContainer):
+    def estimate(self, dataset:Dataset, model_set:ModelSet):
         """Subclasses must implement this method"""
         # it should estimate a number to attribute to each key in dataset accessible with .get method
         # cvbt_path()
@@ -233,7 +262,7 @@ class StratStatEnsembleModel(EnsembleModel):
         # maybe copies not necessary
         dataset_ = cvbt_path(
                     dataset = dataset.copy(), 
-                    model_pipe = model_pipe_container.copy(),
+                    model_pipe = model_set.copy(),
                     k_folds = self.k_folds, 
                     seq_path = self.seq_path, 
                     start_fold = 0, 

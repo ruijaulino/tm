@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import numpy as np
 import pandas as pd
 import pickle
@@ -10,8 +12,13 @@ import time
 from tm.base import BaseModel
 from tm.allocation import Allocation, Optimal
 from tm.transforms.abstract import Transforms
-from tm.containers import Data
+from tm.containers import Data, Dataset
 from tm.constants import *
+
+# there is a circular import
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from tm.ensemble import EnsembleModel
 
 # Model class
 # a model is a set of operations: transform, probabilistic modelling and allocation strategy
@@ -110,55 +117,125 @@ class Model:
         return w
 
 
-if __name__ == '__main__':
+class ModelSet(dict):
+    def __init__(self, master_model:Model = None, ensemble_model:EnsembleModel = None):
+        self.master_model = master_model        
+        self.ensemble_model = ensemble_model
+        # after a model is run this variable stores the dataset 
+        # that was used to estimate the model!    
+        self.estimation_dataset = None
 
-    def linear(n=1000,a=0,b=0.1, scale = 0.01,start_date='2000-01-01'):
-        x=np.random.normal(0,scale,n)
-        y=a+b*x+np.random.normal(0,scale,n)
-        dates=pd.date_range(start_date,periods=n,freq='D')
-        data=pd.DataFrame(np.hstack((y[:,None],x[:,None])),columns=['y1','x1'],index=dates)
-        return data
+    def add(self, key:str, model:Model = None):
+        if key not in self:
+            self[key] = model
 
-    df_train = linear(n=1000, a=0, b=0.5, start_date='2000-01-01')
-    df_test = linear(n=1000, a=0, b=0.5, start_date='2000-01-01')
+    def copy(self):
+        return copy.deepcopy(self)
 
-    tmp = df_test['y1'].values.ravel()
-    tmp[-1] = Y_LIVE_VALUE
-    df_test['y1'] = tmp 
+    def view(self):
+        print()
+        print("******* ModelSet *******")
+        print()
+        if self.ensemble_model:
+            self.ensemble_model.view()
+        print()
+        if self.master_model:
+            print("* Master Model *")
+            self.master_model.view()
+            for k, m in self.items():
+                print()
+                print(f"-> For key {k}")
+                m.view(transforms_only = True)
+
+        else:
+            for k, m in self.items():
+                print()
+                print(f"-> For key {k}")
+                m.view()
+        print("*************************")
+
+    def add(self, key:str, model:Model = None):
+        if key not in self:
+            self[key] = model
+        else:
+            print(f'Warning: a model was already set for key {key}')
     
-    tmp = df_test['x1'].values.ravel()
-    tmp[-1] = np.max(tmp)
-    df_test['x1'] = tmp 
+    def estimate(self, dataset:Dataset, store_details:bool = False):                
+        
+        assert isinstance(dataset, Dataset), "ModelSet can only be used with a Dataset object"
+
+        # estimate ensemble_model, may do nestec cv here
+        if self.ensemble_model:
+            # create a model set without the ensemble model
+            tmp_modelset = self.copy()
+            tmp_modelset.ensemble_model = None # set to None
+            self.ensemble_model.estimate(dataset, tmp_modelset)
+        
+        # estimate models
+        if self.master_model:
+            # if a master model is present, apply transforms, stack the data, and estimate it
+            data = None
+            for k, data_ in dataset.items():
+                # transforms
+                self[k].transforms.estimate(data_)
+                data_ = self[k].transforms.transform(data_)                
+                if not data: 
+                    data = data_
+                else:
+                    data.stack(data_, allow_both_empty = True)
+            if data.empty: raise Exception('data is empty. should not happen')
+            self.master_model.estimate(**data.as_dict())            
+            # set individual copies         
+            # note that the Model may not exists!
+            for k, data in dataset.items():
+                if k not in self:
+                    self[k] = Model()
+                self[k].set_model(self.master_model)
+                # eliminate this for now
+                # self[k].post_estimate(data)
+        else:
+            for k, data in dataset.items():
+                assert k in self, "dataset contains a key that is not defined in ModelSet. Exit.."
+                self[k].estimate(data)        
 
 
-    data_train = Data.from_df(df_train)
-    data_test = Data.from_df(df_test)
+        # when we train a final model we can store the dataset that was used to estimate the
+        # model. If future checks are needed we can just run inference again with it!
+        if store_details:
+            self.estimation_dataset = copy.deepcopy(dataset)
+
+    def evaluate(self, dataset:Dataset):
+        # dataset_dict is a dict of dataset
+        for k, data in dataset.items():
+            assert k in self, "dataset contains a key that is not defined in ModelSet. Exit.."                        
+            self[k].evaluate(data)   
+        # set portfolio weight on dataset                
+        if self.ensemble_model:
+            for k, data in dataset.items():
+                data.pw[:] *= self.ensemble_model.get(k)        
+        return dataset
+
+    def live(self, dataset:Dataset):
+        # to be used in a live setting
+
+        out = {}
+        for k, data in dataset.items():
+            assert k in self, "dataset contains a key that is not defined in ModelSet. Exit.."                        
+            out.update({k: {'w':self[k].live(data), 'w_cols':data.w_cols}})
+
+        # set portfolio weight on dataset                
+        for k, _ in dataset.items():
+            tmp = 1
+            if self.ensemble_model:
+                tmp = self.ensemble_model.get(k)
+            out[k].update({'pw':tmp})
+
+        return out
 
 
-    print(data_train)
-    print('-----------------')
-
-
-
-
-    from tm.base_models import BayesLinRegr
-    regr = BayesLinRegr()
-
-    model = Model(base_model = regr, transforms = None, allocation = None)
-    model.estimate(data_train)
-    model.view()
-    data_test = model.evaluate(data_test)
-
-    plt.plot(data_test.w)
-    plt.show()
-
-    plt.plot(np.cumsum(data_test.s))
-    plt.show()
-
-    print(data_test)
-    print(model.live(data_test))
-
-
+    def save(self, filepath):
+        with open(filepath, 'wb') as f:
+            pickle.dump(self, f, pickle.HIGHEST_PROTOCOL)
 
 
 

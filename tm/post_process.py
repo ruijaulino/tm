@@ -129,7 +129,7 @@ class Paths(list):
             tmp.add('data', dataset)
             self.append(tmp)
         else:
-            self.append(tmp)
+            self.append(dataset)
 
     # add post process methods
     def post_process(self, pct_fee = 0., seq_fees = False, sr_mult = np.sqrt(250), n_boot = 1000, key = None, start_date = '', end_date = ''):

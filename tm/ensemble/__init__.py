@@ -1,1 +1,1 @@
-from .ensemble import IdleEnsembleModel, InvVolEnsembleModel, StratStatEnsembleModel, InvVolStratFilterEnsembleModel, EqWStratFilterEnsembleModel
+from .ensemble import EnsembleModel, IdleEnsembleModel, InvVolEnsembleModel, StratStatEnsembleModel, InvVolStratFilterEnsembleModel, EqWStratFilterEnsembleModel
