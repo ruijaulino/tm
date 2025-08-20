@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from tm.base_models.base_model import BaseModel
+from tm.base import BaseModel
 from numba import jit
 from abc import ABC, abstractmethod
 from typing import List, Union, Dict

@@ -8,7 +8,7 @@ import copy
 import tqdm
 import time
 from tm.model import Model
-from tm.base_models import BaseModel
+from tm.base import BaseModel
 from tm.transforms.abstract import Transform, Transforms
 from tm.containers import Data, Dataset
 from tm.post_process import Paths
@@ -88,7 +88,7 @@ class ModelPipeContainer(dict):
             out.update({k: {'w':self[k].live(data), 'w_cols':data.w_cols}})
         return out    
 
-class PortfolioModel(ABC):
+class EnsembleModel(ABC):
 
     @abstractmethod
     def estimate(self, dataset:Dataset, model_pipe_container:ModelPipeContainer):
@@ -104,13 +104,13 @@ class PortfolioModel(ABC):
         pass
 
     def view(self):
-        print("PortfolioModel")
+        print("EnsembleModel")
         for k, v in self.pws.items():
             print(f'Portfolio Weight for {k} = {v}')
 
 
 class ModelSet():
-    def __init__(self, master_model:Model = None, portfolio_model:PortfolioModel = None):
+    def __init__(self, master_model:Model = None, portfolio_model:EnsembleModel = None):
         self.portfolio_model = portfolio_model
         self.model_pipe_container = ModelPipeContainer(master_model = master_model)        
         # after a model is run this variable stores the dataset 
@@ -257,7 +257,7 @@ if __name__ == '__main__':
     data = Data.from_df(df)
 
     import tm
-    base_model = tm.base_models.BayesLinRegr()
+    base_model = tm.base.BayesLinRegr()
 
     model = Model(base_model = base_model)
 

@@ -1,5 +1,5 @@
 import numpy as np
-from tm.base_models.base_model import BaseModel
+from tm.base import BaseModel
 
 class StateGaussian(BaseModel):
     def __init__(self, min_points = 10, zero_states = []):

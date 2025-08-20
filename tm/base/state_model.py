@@ -1,6 +1,6 @@
 import numpy as np
 import copy
-from tm.base_models.base_model import BaseModel
+from tm.base import BaseModel
 
 class StateModel(BaseModel):
     def __init__(self, base_model, min_points = 10, zero_states = []):

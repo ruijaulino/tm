@@ -1,9 +1,9 @@
 from tm.containers import Dataset
-from tm.workflows import PortfolioModel, ModelPipeContainer, cvbt_path
+from tm.workflows import EnsembleModel, ModelPipeContainer, cvbt_path
 import numpy as np
 
 
-class IdlePortfolioModel(PortfolioModel):
+class IdleEnsembleModel(EnsembleModel):
     
     def __init__(self, v = 1, normalize:bool = True):
         self.v = 1
@@ -24,7 +24,7 @@ class IdlePortfolioModel(PortfolioModel):
     def get(self, k:str) -> float:
         return self.pws.get(k, 1)        
 
-class InvVolPortfolioModel(PortfolioModel):
+class InvVolEnsembleModel(EnsembleModel):
     
     def __init__(self):
         self.pws = {}
@@ -53,7 +53,7 @@ class InvVolPortfolioModel(PortfolioModel):
 
 
 
-class InvVolStratFilterPortfolioModel(PortfolioModel):
+class InvVolStratFilterEnsembleModel(EnsembleModel):
     def __init__(self, strat_filter_statistic = 'sharpe', k_folds:int = 4, seq_path:bool = False, burn_fraction:float = 0.1, min_burn_points:int = 3):
         self.strat_filter_statistic = strat_filter_statistic
         self.k_folds = k_folds
@@ -118,7 +118,7 @@ class InvVolStratFilterPortfolioModel(PortfolioModel):
 
 
 
-class EqWStratFilterPortfolioModel(PortfolioModel):
+class EqWStratFilterEnsembleModel(EnsembleModel):
     def __init__(self, strat_filter_statistic = 'sharpe', k_folds:int = 4, seq_path:bool = False, burn_fraction:float = 0.1, min_burn_points:int = 3):
         self.strat_filter_statistic = strat_filter_statistic
         self.k_folds = k_folds
@@ -184,7 +184,7 @@ class EqWStratFilterPortfolioModel(PortfolioModel):
 
 
 
-class StratStatPortfolioModel(PortfolioModel):
+class StratStatEnsembleModel(EnsembleModel):
     
     def __init__(self, statistic = 'invvol', k_folds:int = 4, seq_path:bool = False, burn_fraction:float = 0.1, min_burn_points:int = 3):
         self.statistic = statistic        

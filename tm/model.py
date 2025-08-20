@@ -7,7 +7,7 @@ from typing import List, Union, Dict
 import copy
 import tqdm
 import time
-from tm.base_models import BaseModel
+from tm.base import BaseModel
 from tm.allocation import Allocation, Optimal
 from tm.transforms.abstract import Transforms
 from tm.containers import Data

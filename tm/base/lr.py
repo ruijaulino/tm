@@ -1,5 +1,6 @@
 import numpy as np
-from tm.base_models.base_model import BaseModel
+from tm.base import BaseModel
+
 
 class LR(BaseModel):
     def __init__(self, kelly_std:float = 2, max_w:float = 1, bias_reduction:float = 0, m2:bool = True):

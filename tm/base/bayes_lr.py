@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from tm.base_models import BaseModel
+from tm.base import BaseModel
 import tm
 
 # numerical routines for bayesian linear regression
