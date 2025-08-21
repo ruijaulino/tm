@@ -64,6 +64,12 @@ class Optimal(Allocation):
         else:
             raise Exception('Optimal for p>1 not yet implemented')
     
+    def norm_w_1d(self, w):
+        w /= self.w_norm
+        idx = np.abs(w) > self.max_w
+        w[idx] = np.sign(w[idx])*self.max_w
+        return w
+
     def get_weight(self, mu, cov, live = False, prev_w = None, **kwargs):                
         p = mu.shape[1]
         if p == 1:
@@ -72,9 +78,7 @@ class Optimal(Allocation):
             # no costs aware alloc
             if self.c is None:
                 w = m / (v + m*m)
-                w /= self.w_norm
-                idx = np.abs(w) > self.max_w
-                w[idx] = np.sign(w[idx])*self.max_w
+                w = self.norm_w_1d(w)
                 if not live:
                     return np.atleast_2d(w.T).T   
                 else:
@@ -90,11 +94,13 @@ class Optimal(Allocation):
                         w[i] = soft(m[i], v[i], self.c, b)
                         b = w[i] # use current weight to condition the next step
                     if not live:
+                        w = self.norm_w_1d(w)
                         return np.atleast_2d(w.T).T   
                     else:
                         # adjust last entry
-                        if prev_w is not None:
+                        if prev_w is not None:                            
                             w[-1] = soft(m[i], v[i], self.c, prev_w)    
+                        w = self.norm_w_1d(w)
                         return w[-1]
 
                 else:
@@ -103,6 +109,7 @@ class Optimal(Allocation):
                     w[idx] = (m[idx]-self.c) / (v[idx]+m[idx]*m[idx])
                     idx = m<-self.c 
                     w[idx] = (m[idx]+self.c) / (v[idx]+m[idx]*m[idx])
+                    w = self.norm_w_1d(w)
                     if not live:
                         return np.atleast_2d(w.T).T   
                     else:
