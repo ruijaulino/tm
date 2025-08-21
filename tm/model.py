@@ -114,7 +114,7 @@ class Model:
         if cov.ndim == 1:
             cov = cov.reshape((cov.size, 1, 1))        
         w = self.allocation.get_weight(mu, cov, live = True, prev_w = prev_w)        
-        return w
+        return np.atleast_1d(w)
 
 
 class ModelSet(dict):

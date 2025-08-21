@@ -13,7 +13,7 @@ from tm.model import Model, ModelSet
 from tm.base import BaseModel
 from tm.transforms.abstract import Transform, Transforms
 from tm.post_process import Paths
-    
+from tm.constants import *    
 # Dict of ModelPipeStack
 # Objective here is to handle for several data in a dataset where
 # each one has a ModelPipeStack associated
@@ -92,7 +92,6 @@ def cvbt(
     return paths
 
 
-
 def test_w_model():
 
     def linear(n=1000,a=0,b=0.1, scale = 0.01,start_date='2000-01-01'):
@@ -104,12 +103,24 @@ def test_w_model():
 
     df = linear(n=1000, a=0, b=0.5, start_date='2000-01-01')
 
+    df_test = linear(n=10, a=0, b=0.5, start_date='2000-01-01')
+    tmp = df_test['y1'].values.ravel()
+    tmp[-1] = Y_LIVE_VALUE
+    df_test['y1'] = tmp
+
     data = Data.from_df(df)
+
+    data_test = Data.from_df(df_test)
 
     import tm
     base_model = tm.base.BayesLinRegr()
+    c = 0.01
 
-    model = Model(base_model = base_model)
+    seq_fees = False
+
+    alloc = tm.allocation.Optimal(c = c, seq_w = seq_fees)
+
+    model = Model(base_model = base_model, allocation = alloc)
 
     paths = cvbt(
             dataset = data, 
@@ -124,7 +135,12 @@ def test_w_model():
 
             )
     
-    paths.post_process()
+    model.estimate(data)
+    out = model.live(data_test)
+    print('LIVE: ', out, type(out))
+
+
+    paths.post_process(pct_fee = c, seq_fees = seq_fees)
 
 
 def test_w_model_set():
@@ -172,4 +188,5 @@ def test_w_model_set():
 
 
 if __name__ == '__main__':
-    test_w_model_set()
+    test_w_model()
+    #test_w_model_set()
