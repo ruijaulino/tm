@@ -1,4 +1,5 @@
 import numpy as np
+import matplotlib.pyplot as plt
 from tm.base import BaseModel
 
 
@@ -43,20 +44,39 @@ class LinRegr(BaseModel):
         return m, self.v*np.ones_like(m)
 
 
+def rollvar(y, f):
+    ysq = y * y
+    # Ensure f is normalized to sum to 1
+    f = f / f.sum()
+    # np.convolve flips filter internally
+    v = np.convolve(ysq, f, mode='full')[:len(ysq)]
+    return v
+
+def predictive_rollvar(y, f):
+    v = rollvar(y, f)
+    v = np.hstack((v[0], v[:-1]))
+    return v
+
+
 class RollVarLinRegr:
     def __init__(self, 
-                 window = 20,                 
+                 phi = 0.95,  
+                 phi_frac_cover = 0.95,               
                  intercept = True                 
                 ):
-        self.window = window
+        self.phi = phi
+        self.phi_frac_cover = min(phi_frac_cover, 0.9999)
         self.regr = LinRegr(intercept = intercept) 
     
     def view(self, **kwargs):
         self.regr.view()
         
     def estimate(self, y, x, msidx = None, **kwargs):   
+        '''
+        estimate without penalizing with varying variance...
+        we can add that but maybe it's too much unjustified complexity        
+        '''
         self.regr.estimate(y = y, x = x)
-
 
     def posterior_predictive(self, y, x, **kwargs):
         '''
@@ -65,16 +85,99 @@ class RollVarLinRegr:
         if y.ndim == 2:
             assert y.shape[1] == 1, "y must contain a single target"
             y = y[:, 0]          
-
-        m, _ = self.regr.posterior_predictive(x = x)        
-        
-        v = np.zeros_like(y)
-        for i in range(self.window, y.size):
-            v[i] = np.var(y[i-self.window:i])
-        v[:self.window] = v[self.window] 
+        m, _ = self.regr.posterior_predictive(x = x)                
+        # create filter
+        k_f = np.log(1-self.phi_frac_cover)/np.log(self.phi) - 1
+        f = (1-self.phi)*np.power(self.phi, np.arange(int(k_f)+1))
+        v = predictive_rollvar(y, f)
         return m, v
 
+
+def dev():
+    
+    np.random.seed(0)
+
+    y = np.random.normal(0,1,500)
+
+
+    phi = 0.93
+    n = y.size
+    window = 100
+
+
+    v0 = np.zeros_like(y)
+    v1 = np.zeros_like(y)
+    
+    v1[:window] = np.var(y[:window])
+
+
+    f = np.ones(window) / window
+    v01 = predictive_rollvar(y, f)
+
+    f = (1-phi)*np.power(phi, np.arange(window))
+    #print(f)
+
+    v11 = predictive_rollvar(y, f)
+    v1[:window] = v11[:window]
+
+    for i in range(window, y.size):
+        v0[i] = np.mean(y[i-window:i]*y[i-window:i])
+        v1[i] = (1-phi)*(y[i-1]**2) + phi*v1[i-1]
+
+    v0[:window] = v0[window] 
+
+    plt.plot(v0, color = 'b')
+    plt.plot(v01, color = 'r')
+    
+    plt.plot(v1, color = 'g')
+    plt.plot(v11, color = 'm')
+    
+    plt.show()
+
+
+
+
+def test():
+    np.random.seed(0)
+    y = np.random.normal(0, 1, 1000)
+
+    phi = 0.93
+    n = y.size
+    window = 50
+
+    # No need to reverse — np.convolve handles it
+    f = (1 - phi) * np.power(phi, np.arange(window))
+
+    
+
+    print('window size: ', )
+
+    print('sum of f: ', np.sum(f))
+
+
+    plt.plot(f)
+    plt.title("Exponential filter")
+    plt.show()
+
+    v1 = rollvar(y, f)
+
+    v2 = np.zeros(n)
+    for i in range(1, n):
+        v2[i] = (1 - phi) * (y[i] ** 2) + phi * v2[i - 1]
+
+    plt.plot(v1, label='v1 (convolution)')
+    plt.plot(v2, label='v2 (recursive)', linestyle='--')
+    plt.legend()
+    plt.title("Rolling Variance Comparison")
+    plt.show()
+
+
+
+
 if __name__ == '__main__':
+    test()
+    dev()
+    exit(0)
     n = 1000
     a=0.1
     b=0.5
