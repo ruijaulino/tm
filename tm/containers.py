@@ -240,8 +240,8 @@ class Data:
         self._process_msidx()
         return self
 
-    def as_dict(self):
-        return {'y': self.y, 'x': self.x, 't': self.t, 'z': self.z, 'msidx': self.msidx}
+    def as_dict(self, is_live:bool = False):
+        return {'y': self.y, 'x': self.x, 't': self.t, 'z': self.z, 'msidx': self.msidx, 'is_live': is_live}
 
     def input_at(self, idx: int = None):
         if idx is None:

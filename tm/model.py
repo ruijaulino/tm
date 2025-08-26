@@ -125,7 +125,7 @@ class Model:
             assert (t[-1] == T_LIVE_VALUE).all(), "In a live setting, the last observation of t must have been generated artificially with zeros.."    
         # it does not matter that we are making more computations than needed here because it
         # is a fast operation done only once when execution live
-        mu, cov = self.base_model.posterior_predictive(**transformed_data.as_dict())
+        mu, cov = self.base_model.posterior_predictive(**transformed_data.as_dict(is_live = True))
         if mu.ndim == 1:
             mu = mu.reshape((mu.size, 1))
         if cov.ndim == 1:
