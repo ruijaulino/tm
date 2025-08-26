@@ -35,8 +35,11 @@ class Model:
     def copy(self):
         return copy.deepcopy(self)
 
-    def set_model(self, base_model:BaseModel):
+    def set_base_model(self, base_model:BaseModel):
         self.base_model = copy.deepcopy(base_model)
+
+    def set_transforms(self, transforms:Transforms):
+        self.transforms = copy.deepcopy(transforms)
 
     def view(self, transforms_only = False):
         if transforms_only:
@@ -51,20 +54,34 @@ class Model:
         print()
         print()
 
-    def estimate(self, data:Data):        
-        # estimate transforms
+    def estimate_transforms(self, data:Data):
         self.transforms.estimate(data)
-        # apply to training data
-        data = self.transforms.transform(data)        
-        # the arguments passed are like model.estimate(y, x, z, t, msidx) 
+        
+    def transform(self, data:Data):
+        return self.transforms.transform(data)
+
+    def estimate_base_model(self, data:Data):
         self.base_model.estimate(**data.as_dict())
+        
+    def estimate_allocation(self, data:Data):
         # get predictive distribution on training data
         mu, cov = self.base_model.posterior_predictive(**data.as_dict())
         if mu.ndim == 1:
             mu = mu.reshape((mu.size, 1))
         if cov.ndim == 1:
             cov = cov.reshape((cov.size, 1, 1))
-        self.allocation.estimate(mu, cov)        
+        self.allocation.estimate(mu, cov)  
+
+
+
+    def estimate(self, data:Data):        
+        # estimate transforms
+        self.estimate_transforms(data)
+        # apply to training data
+        transformed_data = self.transform(data)        
+        # the arguments passed are like model.estimate(y, x, z, t, msidx) 
+        self.estimate_base_model(transformed_data)
+        self.estimate_allocation(transformed_data)
 
     def post_estimate(self, data:Data):
         # adjust parameters after master is estimated!
@@ -125,10 +142,6 @@ class ModelSet(dict):
         # that was used to estimate the model!    
         self.estimation_dataset = None
 
-    def add(self, key:str, model:Model = None):
-        if key not in self:
-            self[key] = model
-
     def copy(self):
         return copy.deepcopy(self)
 
@@ -139,22 +152,14 @@ class ModelSet(dict):
         if self.ensemble_model:
             self.ensemble_model.view()
         print()
-        if self.master_model:
-            print("* Master Model *")
-            self.master_model.view()
-            for k, m in self.items():
-                print()
-                print(f"-> For key {k}")
-                m.view(transforms_only = True)
-
-        else:
-            for k, m in self.items():
-                print()
-                print(f"-> For key {k}")
-                m.view()
+        for k, m in self.items():
+            print()
+            print(f"-> For key {k}")
+            m.view()
         print("*************************")
 
     def add(self, key:str, model:Model = None):
+        assert self.master_model is None, "setting a model on a key a master model is defined"
         if key not in self:
             self[key] = model
         else:
@@ -176,23 +181,24 @@ class ModelSet(dict):
             # if a master model is present, apply transforms, stack the data, and estimate it
             data = None
             for k, data_ in dataset.items():
+                # copy the master model
+                k_model = self.master_model.copy()
+                k_model.estimate_transforms(data_)                
                 # transforms
-                self[k].transforms.estimate(data_)
-                data_ = self[k].transforms.transform(data_)                
+                transformed_data_ = k_model.transform(data_)                                
                 if not data: 
-                    data = data_
+                    data = transformed_data_
                 else:
-                    data.stack(data_, allow_both_empty = True)
+                    data.stack(transformed_data_, allow_both_empty = True)
+                # add to key
+                self[k] = k_model
+
             if data.empty: raise Exception('data is empty. should not happen')
-            self.master_model.estimate(**data.as_dict())            
-            # set individual copies         
+            self.master_model.estimate_base_model(data)            
             # note that the Model may not exists!
             for k, data in dataset.items():
-                if k not in self:
-                    self[k] = Model()
-                self[k].set_model(self.master_model)
-                # eliminate this for now
-                # self[k].post_estimate(data)
+                self[k].set_base_model(self.master_model.base_model)
+        
         else:
             for k, data in dataset.items():
                 assert k in self, "dataset contains a key that is not defined in ModelSet. Exit.."

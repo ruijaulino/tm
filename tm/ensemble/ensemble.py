@@ -113,7 +113,7 @@ class InvVolStratFilterEnsembleModel(EnsembleModel):
         # maybe copies not necessary
         dataset_ = cvbt_path(
                     dataset = dataset.copy(), 
-                    model_pipe = model_set.copy(),
+                    modelset = model_set.copy(),
                     k_folds = self.k_folds, 
                     seq_path = self.seq_path, 
                     start_fold = 0, 
@@ -178,7 +178,7 @@ class EqWStratFilterEnsembleModel(EnsembleModel):
         # maybe copies not necessary
         dataset_ = cvbt_path(
                     dataset = dataset.copy(), 
-                    model_pipe = model_set.copy(),
+                    modelset = model_set.copy(),
                     k_folds = self.k_folds, 
                     seq_path = self.seq_path, 
                     start_fold = 0, 
@@ -262,7 +262,7 @@ class StratStatEnsembleModel(EnsembleModel):
         # maybe copies not necessary
         dataset_ = cvbt_path(
                     dataset = dataset.copy(), 
-                    model_pipe = model_set.copy(),
+                    modelset = model_set.copy(),
                     k_folds = self.k_folds, 
                     seq_path = self.seq_path, 
                     start_fold = 0, 

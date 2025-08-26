@@ -296,7 +296,7 @@ class Dataset(dict):
         ts = np.hstack(ts)
         ts = np.unique(ts)
         ts.sort()            
-        self.folds_ts = split_ts(ts, k_folds=4)
+        self.folds_ts = split_ts(ts, k_folds=k_folds)
         return self
 
     def split(

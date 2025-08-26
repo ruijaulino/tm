@@ -175,19 +175,20 @@ def test():
 
 
 if __name__ == '__main__':
-    test()
-    dev()
-    exit(0)
+    #test()
+    #dev()
+    #exit(0)
+    
     n = 1000
     a=0.1
     b=0.5
     scale = 0.01
     x=np.random.normal(0,scale,n)
     y=a+b*x+np.random.normal(0,scale,n)
-    linregr = RollVarLinRegr()
+    linregr = LinRegr()
     linregr.estimate(y = y, x = x[:,None])
     linregr.view()
-    print(linregr.posterior_predictive(y, x[:,None]))
+    # print(linregr.posterior_predictive(y, x[:,None]))
     pass
 
 
