@@ -165,7 +165,7 @@ class ModelSet(dict):
         else:
             print(f'Warning: a model was already set for key {key}')
     
-    def estimate(self, dataset:Dataset, store_details:bool = False):                
+    def estimate(self, dataset:Dataset, store_details:bool = True):                
         
         assert isinstance(dataset, Dataset), "ModelSet can only be used with a Dataset object"
 
