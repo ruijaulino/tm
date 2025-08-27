@@ -9,11 +9,15 @@ class LinRegr(BaseModel):
         self.w = None
         self.v = 1
 
-    def view(self, **kwargs):
+    def view(self, plot = False, **kwargs):
         print('** Linear Regression **')
         print('Weights: ', self.w)
         print('Variance: ', self.v)
-
+        if plot:
+            plt.title('Regression weights')
+            plt.plot(self.w, '.-')
+            plt.grid(True)
+            plt.show()
 
     def estimate(self, y, x, **kwargs):
         '''
@@ -68,8 +72,8 @@ class RollVarLinRegr:
         self.phi_frac_cover = min(phi_frac_cover, 0.9999)
         self.regr = LinRegr(intercept = intercept) 
     
-    def view(self, **kwargs):
-        self.regr.view()
+    def view(self, plot = False, **kwargs):
+        self.regr.view(plot = plot)
         
     def estimate(self, y, x, msidx = None, **kwargs):   
         '''

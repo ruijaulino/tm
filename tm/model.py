@@ -44,12 +44,12 @@ class Model:
     def set_allocation(self, allocation:Allocation):
         self.allocation = copy.deepcopy(allocation)
 
-    def view(self, transforms_only = False):
+    def view(self, plot = False, transforms_only = False, **kwargs):
         if transforms_only:
                 self.transforms.view()
         else:
             print("* Model *")
-            self.base_model.view()
+            self.base_model.view(plot = plot)
             print()
             self.transforms.view()
             print()
@@ -148,18 +148,19 @@ class ModelSet(dict):
     def copy(self):
         return copy.deepcopy(self)
 
-    def view(self):
+    def view(self, plot = False, **kwargs):
         print()
         print("******* ModelSet *******")
         print()
         if self.ensemble_model:
-            self.ensemble_model.view()
+            self.ensemble_model.view(plot = plot)
         print()
         for k, m in self.items():
             print()
             print(f"-> For key {k}")
-            m.view()
+            m.view(plot = plot)
         print("*************************")
+
 
     def add(self, key:str, model:Model = None):
         assert self.master_model is None, "setting a model on a key a master model is defined"

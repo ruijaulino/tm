@@ -25,7 +25,7 @@ class EnsembleModel(ABC):
         # returns the portfolio weight for a key
         pass
 
-    def view(self):
+    def view(self, **kwargs):
         print("EnsembleModel")
         for k, v in self.pws.items():
             print(f'Portfolio Weight for {k} = {v}')

@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 class BaseModel(ABC):
 
     # then this can be overridden
-    def view(self, **kwargs):
+    def view(self, plot, **kwargs):
         pass
 
     @abstractmethod
