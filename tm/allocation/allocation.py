@@ -60,7 +60,7 @@ class Optimal(Allocation):
             m = mu.ravel()
             v = cov.ravel()
             w = m / (v + m*m)
-            self.w_norm = np.quantile(np.abs(w), self.quantile)
+            self.w_norm = np.quantile(np.abs(w), self.quantile, method = 'closest_observation') # using this method also work for state models
         else:
             raise Exception('Optimal for p>1 not yet implemented')
     

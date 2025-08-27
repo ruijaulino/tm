@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from tm.base import BaseModel
-
+from tm.base import utils
 
 class LinRegr(BaseModel):
     def __init__(self, intercept = True):
@@ -47,21 +47,6 @@ class LinRegr(BaseModel):
         m = x @ self.w        
         return m, self.v*np.ones_like(m)
 
-
-def rollvar(y, f):
-    ysq = y * y
-    # Ensure f is normalized to sum to 1
-    f = f / f.sum()
-    # np.convolve flips filter internally
-    v = np.convolve(ysq, f, mode='full')[:len(ysq)]
-    return v
-
-def predictive_rollvar(y, f):
-    v = rollvar(y, f)
-    v = np.hstack((v[0], v[:-1]))
-    return v
-
-
 class RollVarLinRegr:
     def __init__(self, 
                  phi = 0.95,  
@@ -94,7 +79,7 @@ class RollVarLinRegr:
             # create filter
             k_f = np.log(1-self.phi_frac_cover)/np.log(self.phi) - 1
             f = (1-self.phi)*np.power(self.phi, np.arange(int(k_f)+1))
-            v = predictive_rollvar(y, f)
+            v = utils.predictive_rollvar(y, f)
             # burn some observations
             if is_live and y.size < f.size:
                 print('Data is not enough for live. Return zero weight...')
@@ -196,10 +181,10 @@ if __name__ == '__main__':
     scale = 0.01
     x=np.random.normal(0,scale,n)
     y=a+b*x+np.random.normal(0,scale,n)
-    linregr = LinRegr()
+    linregr = RollVarLinRegr()
     linregr.estimate(y = y, x = x[:,None])
     linregr.view()
-    # print(linregr.posterior_predictive(y, x[:,None]))
+    print(linregr.posterior_predictive(y, x[:,None]))
     pass
 
 
