@@ -41,6 +41,9 @@ class Model:
     def set_transforms(self, transforms:Transforms):
         self.transforms = copy.deepcopy(transforms)
 
+    def set_allocation(self, allocation:Allocation):
+        self.allocation = copy.deepcopy(allocation)
+
     def view(self, transforms_only = False):
         if transforms_only:
                 self.transforms.view()
@@ -71,8 +74,6 @@ class Model:
         if cov.ndim == 1:
             cov = cov.reshape((cov.size, 1, 1))
         self.allocation.estimate(mu, cov)  
-
-
 
     def estimate(self, data:Data):        
         # estimate transforms
@@ -135,12 +136,14 @@ class Model:
 
 
 class ModelSet(dict):
-    def __init__(self, master_model:Model = None, ensemble_model:EnsembleModel = None):
+    def __init__(self, master_model:Model = None, ensemble_model:EnsembleModel = None, individual_alloc_norm:bool = False):
         self.master_model = master_model        
         self.ensemble_model = ensemble_model
+        self.individual_alloc_norm = individual_alloc_norm
         # after a model is run this variable stores the dataset 
         # that was used to estimate the model!    
         self.estimation_dataset = None
+
 
     def copy(self):
         return copy.deepcopy(self)
@@ -194,11 +197,22 @@ class ModelSet(dict):
                 self[k] = k_model
 
             if data.empty: raise Exception('data is empty. should not happen')
+            # estimate master model
             self.master_model.estimate_base_model(data)            
-            # note that the Model may not exists!
+            # estimate allocation
+            if not self.individual_alloc_norm:
+                self.master_model.estimate_allocation(data)    
+
+            # set base models and estimate allocation
             for k, data in dataset.items():
                 self[k].set_base_model(self.master_model.base_model)
-        
+                # estimate allocation for each one
+                if self.individual_alloc_norm:
+                    self[k].estimate_allocation(self[k].transform(data))
+                # set the global one
+                else:
+                    self[k].set_allocation(self.master_model.allocation)
+
         else:
             for k, data in dataset.items():
                 assert k in self, "dataset contains a key that is not defined in ModelSet. Exit.."
