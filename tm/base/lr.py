@@ -1,7 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from tm.base import BaseModel
-from tm.base import utils
 
 class LinRegr(BaseModel):
     def __init__(self, intercept = True):
@@ -47,47 +46,6 @@ class LinRegr(BaseModel):
         m = x @ self.w        
         return m, self.v*np.ones_like(m)
 
-class RollVarLinRegr:
-    def __init__(self, 
-                 phi = 0.95,  
-                 phi_frac_cover = 0.95,               
-                 intercept = True                 
-                ):
-        self.phi = phi
-        self.phi_frac_cover = min(phi_frac_cover, 0.9999)
-        self.regr = LinRegr(intercept = intercept) 
-    
-    def view(self, plot = False, **kwargs):
-        self.regr.view(plot = plot)
-        
-    def estimate(self, y, x, msidx = None, **kwargs):   
-        '''
-        estimate without penalizing with varying variance...
-        we can add that but maybe it's too much unjustified complexity        
-        '''
-        self.regr.estimate(y = y, x = x)
-
-    def posterior_predictive(self, y, x, is_live = False, **kwargs):
-        '''
-        x: numpy (m, p) array
-        '''            
-        if y.ndim == 2:
-            assert y.shape[1] == 1, "y must contain a single target"
-            y = y[:, 0]          
-        if y.size != 0:
-            m, _ = self.regr.posterior_predictive(x = x)                
-            # create filter
-            k_f = np.log(1-self.phi_frac_cover)/np.log(self.phi) - 1
-            f = (1-self.phi)*np.power(self.phi, np.arange(int(k_f)+1))
-            v = utils.predictive_rollvar(y, f)
-            # burn some observations
-            if is_live and y.size < f.size:
-                print('Data is not enough for live. Return zero weight...')
-            m[:f.size] = 0
-            v[:f.size] = 1
-            return m, v
-        else:
-            return np.zeros_like(y), np.ones_like(y)
 
 def dev():
     
@@ -181,7 +139,7 @@ if __name__ == '__main__':
     scale = 0.01
     x=np.random.normal(0,scale,n)
     y=a+b*x+np.random.normal(0,scale,n)
-    linregr = RollVarLinRegr()
+    linregr = LinRegr()
     linregr.estimate(y = y, x = x[:,None])
     linregr.view()
     print(linregr.posterior_predictive(y, x[:,None]))

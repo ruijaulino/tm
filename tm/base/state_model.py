@@ -1,6 +1,5 @@
 import numpy as np
 import copy
-from tm.base import utils
 from tm.base import BaseModel
 
 class StateModel(BaseModel):
@@ -13,7 +12,7 @@ class StateModel(BaseModel):
         self.w_norm = 1
         self.p = 1
 
-    def view(self, plot_hist = True):
+    def view(self, plot = False, **kwargs):
 
         print('** State Model **')
         for k, v in self.states_distribution.items():

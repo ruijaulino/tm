@@ -1,7 +1,7 @@
 from .base import BaseModel
-from .utils import rollvar, predictive_rollvar
-from .lr import LinRegr, RollVarLinRegr
-from .bayes_lr import BayesLinRegr
+from .lr import LinRegr
 from .state_model import StateModel
+from .rollvar import RollVar, RollVarLinRegr, RollVarStateModel
+from .bayes_lr import BayesLinRegr
 from .gaussian import Gaussian, ConditionalGaussian
 from .hmm import HMM, HMMEmissions, uGaussianEmissions
