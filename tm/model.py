@@ -119,10 +119,12 @@ class Model:
 
         # apply transforms
         transformed_data = self.transforms.transform(data)
+        transformed_data.y[-1] = data.y[-1] # restore value        
         use_t = transformed_data.t is not None
         # check data format for live execution
         assert (transformed_data.y[-1] == Y_LIVE_VALUE).all(), "In a live setting, the last observation of y must have been generated artificially with zeros.."    
         if use_t:
+            transformed_data.t[-1] = data.t[-1] # restore value        
             assert (t[-1] == T_LIVE_VALUE).all(), "In a live setting, the last observation of t must have been generated artificially with zeros.."    
         # it does not matter that we are making more computations than needed here because it
         # is a fast operation done only once when execution live

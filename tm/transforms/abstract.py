@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 import copy
 from tm.containers import Data
+from tm.constants import *
 
 # Transform class
 class Transform(ABC):
@@ -59,7 +60,7 @@ class Transforms():
         if self.t_transform:
             if data.t is None: raise Exception('t_transform is defined for data without t...')
             self.t_transform.estimate(data.t) 
-            
+    
     def transform(self, data:Data):
         # maybe refactor a bit Data class to make this more clear!
         if self.has_transforms:
