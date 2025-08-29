@@ -63,6 +63,7 @@ class Optimal(Allocation):
             w = m / (v + m*m)
             if w.size != 0:
                 self.w_norm = np.quantile(np.abs(w), self.quantile, method = 'closest_observation') # using this method also work for state models
+                if self.w_norm == 0: self.w_norm = 1
             else:
                 self.w_norm = 1
         else:

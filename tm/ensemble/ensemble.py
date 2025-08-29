@@ -228,7 +228,7 @@ class StratStatEnsembleModel(EnsembleModel):
         if self.statistic == 'invvol':
             scale = np.std(s)
             if scale != 0:
-                return 1 / scale
+                return np.sign(np.mean(s)) / scale
             else:
                 return 0
         
