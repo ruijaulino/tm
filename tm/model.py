@@ -209,12 +209,11 @@ class ModelSet(dict):
             # set base models and estimate allocation
             for k, data in dataset.items():
                 self[k].set_base_model(self.master_model.base_model)
+                # set the global one (even if not estimated yet...)
+                self[k].set_allocation(self.master_model.allocation)
                 # estimate allocation for each one
                 if self.individual_alloc_norm:
                     self[k].estimate_allocation(self[k].transform(data))
-                # set the global one
-                else:
-                    self[k].set_allocation(self.master_model.allocation)
 
         else:
             for k, data in dataset.items():

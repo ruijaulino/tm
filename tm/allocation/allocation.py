@@ -46,6 +46,7 @@ class Optimal(Allocation):
         self.max_w = max_w
         self.c = c
         self.seq_w = seq_w
+        self.w_norm = 1
 
     def view(self):
         print('Weight norm: ', self.w_norm)
@@ -60,7 +61,10 @@ class Optimal(Allocation):
             m = mu.ravel()
             v = cov.ravel()
             w = m / (v + m*m)
-            self.w_norm = np.quantile(np.abs(w), self.quantile, method = 'closest_observation') # using this method also work for state models
+            if w.size != 0:
+                self.w_norm = np.quantile(np.abs(w), self.quantile, method = 'closest_observation') # using this method also work for state models
+            else:
+                self.w_norm = 1
         else:
             raise Exception('Optimal for p>1 not yet implemented')
     
