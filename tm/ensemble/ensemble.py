@@ -72,7 +72,6 @@ class InvVolEnsembleModel(EnsembleModel):
             else:
                 keys.append(k)
                 vols.append(1e10)
-
         vols = 1 / np.array(vols)
         vols /= np.sum(vols)
         self.pws = dict(zip(keys, vols))
@@ -223,7 +222,6 @@ class StratStatEnsembleModel(EnsembleModel):
         self.min_burn_points = min_burn_points
         self.pws = {}
 
-
     def _compute_stat(self, s):
         if self.statistic == 'invvol':
             scale = np.std(s)
@@ -237,22 +235,28 @@ class StratStatEnsembleModel(EnsembleModel):
             if scale != 0:
                 return np.mean(s) / scale
             else:
-                return 0            
+                return 0      
+
+        elif self.statistic == 'sharpe2':
+            scale = np.std(s)
+            if scale != 0:
+                return np.power(np.mean(s) / scale, 2)
+            else:
+                return 0      
+
         
         elif self.statistic == 'mean':
             return np.mean(s)
 
         elif self.statistic == 'kelly':
-            v = np.var(s)
+            v = np.mean(s*s)
             if v != 0:
                 return np.mean(s) / v
             else:
                 return 0     
 
-
         elif self.statistic == 'gr':
             return np.mean(s) - 0.5*np.mean(np.power(s, 2))
-
 
     def estimate(self, dataset:Dataset, model_set:ModelSet):
         """Subclasses must implement this method"""

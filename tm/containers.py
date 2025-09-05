@@ -46,12 +46,12 @@ class Data:
         self.pw = np.ones(len(ts)) if pw is None else pw
         self.w = np.zeros((y.shape[0], y.shape[1])) if w is None else w
         self.msidx = np.zeros(len(ts), dtype=int) if msidx is None else msidx
-
+        
         self.y_cols = y_cols
         self.x_cols = x_cols
         self.t_cols = t_cols
         self.w_cols = w_cols if w_cols is not None else np.array([f"{W}_{e}" for e in y_cols])
-
+        
         self.n, self.p = self.y.shape
         self.msidx_start = None
         self.msidx_start_lookup = None
