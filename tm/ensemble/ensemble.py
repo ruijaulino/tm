@@ -291,3 +291,46 @@ class StratStatEnsembleModel(EnsembleModel):
 
 
 
+class StratAllocEnsembleModel(EnsembleModel):
+    
+    def __init__(self, beta = 0.1, k_folds:int = 4, seq_path:bool = False, burn_fraction:float = 0.1, min_burn_points:int = 3):
+        self.beta = beta
+        self.k_folds = k_folds
+        self.seq_path = seq_path
+        self.burn_fraction = burn_fraction
+        self.min_burn_points = min_burn_points
+        self.pws = {}
+
+    def estimate(self, dataset:Dataset, model_set:ModelSet):
+        """Subclasses must implement this method"""
+        # it should estimate a number to attribute to each key in dataset accessible with .get method
+        # cvbt_path()
+
+        # maybe copies not necessary
+        dataset_ = cvbt_path(
+                    dataset = dataset.copy(), 
+                    modelset = model_set.copy(),
+                    k_folds = self.k_folds, 
+                    seq_path = self.seq_path, 
+                    start_fold = 0, 
+                    burn_fraction = self.burn_fraction, 
+                    min_burn_points = self.min_burn_points
+                    )
+        keys = []
+        m = []
+        scale = []
+        for k, data in dataset_.items():
+            keys.append(k)
+            m.append(max(np.mean(data.s),0))
+            scale.append(np.std(data.s))
+        
+        m = np.array(m)
+        scale = np.array(scale)
+        w = np.ones_like(m)
+        w /= np.sum(w)        
+        v = scale*scale
+        w += (m-np.mean(m) + (np.mean(v)-v)/w.size) / self.beta        
+        self.pws = dict(zip(keys, w))
+
+    def get(self, k:str) -> float:
+        return self.pws.get(k, 1) 
