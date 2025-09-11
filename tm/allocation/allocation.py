@@ -55,7 +55,6 @@ class Optimal(Allocation):
         # make sure inputs make sense
         assert mu.ndim == 2, "mu must be a matrix"
         assert cov.ndim == 3, "cov must be a tensor"
-
         p = mu.shape[1]
         if p == 1:
             m = mu.ravel()

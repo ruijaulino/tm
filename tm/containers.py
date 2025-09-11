@@ -62,7 +62,6 @@ class Data:
     def split_ts(self, k_folds, **kwargs):
         self.folds_ts = split_ts(self.ts, k_folds = k_folds)
 
-
     def split(
             self, 
             test_fold_idx: int, 
