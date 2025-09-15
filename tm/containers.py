@@ -134,6 +134,10 @@ class Data:
 
     @classmethod
     def from_df(cls, df: pd.DataFrame):
+        
+        assert not isinstance(df.columns, pd.MultiIndex), "df is a DataFrame with MultiIndex. Correct the inputs..."
+
+
         df.index = pd.to_datetime(df.index)
         ts = datetime_to_int(df.index)
         
