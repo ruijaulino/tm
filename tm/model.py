@@ -105,7 +105,7 @@ class Model:
             mu = mu.reshape((mu.size, 1))
         if cov.ndim == 1:
             cov = cov.reshape((cov.size, 1, 1))
-        w = self.allocation.get_weight(mu, cov)        
+        w = self.allocation.get_weight(mu, cov, cost_scale = self.transforms.cost_scale())        
         # set on original data!
         data.w[:] = w
         data.s[:] = np.einsum('ij,ij->i', w, data.y)
@@ -122,10 +122,10 @@ class Model:
         transformed_data.y[-1] = data.y[-1] # restore value        
         use_t = transformed_data.t is not None
         # check data format for live execution
-        assert (transformed_data.y[-1] == Y_LIVE_VALUE).all(), "In a live setting, the last observation of y must have been generated artificially with zeros.."    
+        assert (transformed_data.y[-1] == Y_LIVE_VALUE).all(), f"In a live setting, the last observation of y must have been generated artificially with {Y_LIVE_VALUE}"    
         if use_t:
             transformed_data.t[-1] = data.t[-1] # restore value        
-            assert (t[-1] == T_LIVE_VALUE).all(), "In a live setting, the last observation of t must have been generated artificially with zeros.."    
+            assert (t[-1] == T_LIVE_VALUE).all(), f"In a live setting, the last observation of t must have been generated artificially with {T_LIVE_VALUE}"    
         # it does not matter that we are making more computations than needed here because it
         # is a fast operation done only once when execution live
         mu, cov = self.base_model.posterior_predictive(**transformed_data.as_dict(is_live = True))
@@ -133,7 +133,7 @@ class Model:
             mu = mu.reshape((mu.size, 1))
         if cov.ndim == 1:
             cov = cov.reshape((cov.size, 1, 1))        
-        w = self.allocation.get_weight(mu, cov, live = True, prev_w = prev_w)        
+        w = self.allocation.get_weight(mu, cov, cost_scale = self.transforms.cost_scale(), live = True, prev_w = prev_w)        
         return np.atleast_1d(w)
 
 

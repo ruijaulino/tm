@@ -293,8 +293,12 @@ class StratStatEnsembleModel(EnsembleModel):
 
 class StratAllocEnsembleModel(EnsembleModel):
     
-    def __init__(self, beta = 0.1, k_folds:int = 4, seq_path:bool = False, burn_fraction:float = 0.1, min_burn_points:int = 3):
+    def __init__(self, beta = 0.1, filter_mean:bool = True, auto_beta:bool = False, auto_beta_min_w_f:float = 0.1, k_folds:int = 4, seq_path:bool = False, burn_fraction:float = 0.1, min_burn_points:int = 3):
         self.beta = beta
+        self.filter_mean = filter_mean
+        self.auto_beta = auto_beta
+        self.auto_beta_min_w_f = auto_beta_min_w_f
+        self.auto_beta_min_w_f = min(max(0, self.auto_beta_min_w_f), 0.99)
         self.k_folds = k_folds
         self.seq_path = seq_path
         self.burn_fraction = burn_fraction
@@ -326,11 +330,36 @@ class StratAllocEnsembleModel(EnsembleModel):
         
         m = np.array(m)
         scale = np.array(scale)
-        w = np.ones_like(m)
-        w /= np.sum(w)        
-        v = scale*scale
-        w += (m-np.mean(m) + (np.mean(v)-v)/w.size) / self.beta        
-        self.pws = dict(zip(keys, w))
+        
+        
+        if self.filter_mean:
+            valid = m>0
+        else:
+            valid = np.ones(m.size, dtype = bool)
+
+        # if non are valid just put all to zero
+        if np.sum(valid) == 0:
+            w = np.zeros_like(m)
+            self.pws = dict(zip(keys, w))    
+        else:                
+            w = np.ones_like(m)
+            w[~valid] = 0
+            w /= np.sum(w)        
+            
+            v = scale*scale
+
+            if self.auto_beta:
+                f = (m[valid]-np.mean(m[valid]) + (np.mean(v[valid])-v[valid])/w[valid].size)
+                minf = np.min(f)
+                if minf < 0:
+                    self.beta = -1 * f.size * minf / (1 - self.auto_beta_min_w_f)
+
+            w[valid] += (m[valid]-np.mean(m[valid]) + (np.mean(v[valid])-v[valid])/w[valid].size) / self.beta        
+            w[w<0] = 0 # for security
+            self.pws = dict(zip(keys, w))
 
     def get(self, k:str) -> float:
         return self.pws.get(k, 1) 
+
+
+

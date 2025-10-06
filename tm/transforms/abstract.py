@@ -12,6 +12,10 @@ class Transform(ABC):
         pass
 
     @abstractmethod
+    def cost_scale(self):
+        pass
+
+    @abstractmethod
     def estimate(self, arr:np.ndarray, **kwargs):
         """Subclasses must implement this method"""
         pass
@@ -50,6 +54,12 @@ class Transforms():
             print('t transform')
             self.t_transform.view()
 
+    def cost_scale(self):
+        if self.y_transform:
+            return self.y_transform.cost_scale()
+        else:
+            return 1
+
     def estimate(self, data:Data):
         # maybe refactor a bit Data class to make this more clear!
         if self.y_transform:
@@ -60,6 +70,8 @@ class Transforms():
         if self.t_transform:
             if data.t is None: raise Exception('t_transform is defined for data without t...')
             self.t_transform.estimate(data.t) 
+
+
     
     def transform(self, data:Data):
         # maybe refactor a bit Data class to make this more clear!

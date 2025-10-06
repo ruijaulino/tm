@@ -17,6 +17,9 @@ class ScaleTransform(Transform):
         if self.demean:
             print('mean: ', self.mean)
 
+    def cost_scale(self):
+        return self.scale
+
     def estimate(self, arr:np.ndarray, **kwargs):
         """Subclasses must implement this method"""        
         if arr.shape[0] != 0:

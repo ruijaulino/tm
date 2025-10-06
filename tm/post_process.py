@@ -177,6 +177,9 @@ class Paths(list):
 
         performance_summary(s,sr_mult,pct_fee=pct_fee)
 
+        out = pd.DataFrame(s, index = ts)
+        out.columns = [f'path_{i+1}' for i in range(len(out.columns))]
+        return out
 
     def portfolio_post_process(self, pct_fee = 0., seq_fees = False, sr_mult = np.sqrt(250), n_boot = 1000, view_weights = True, use_pw = True, multiplier = 1, start_date = '', end_date = ''):
      
@@ -284,3 +287,4 @@ class Paths(list):
         performance_summary(s, sr_mult, pct_fee = pct_fee)
 
 
+        return out

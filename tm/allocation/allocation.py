@@ -74,7 +74,7 @@ class Optimal(Allocation):
         w[idx] = np.sign(w[idx])*self.max_w
         return w
 
-    def get_weight(self, mu, cov, live = False, prev_w = None, **kwargs):                
+    def get_weight(self, mu, cov, cost_scale = 1, live = False, prev_w = None, **kwargs):                
         p = mu.shape[1]
         if p == 1:
             m = mu.ravel()
@@ -90,12 +90,18 @@ class Optimal(Allocation):
 
             # costs aware alloc
             else:
+                # create costs
+                if isinstance(cost_scale, np.ndarray):
+                    assert cost_scale.ndim == 1, "cost_scale must be a vector"
+                    assert cost_scale.size == 1, "cost_scale must have a single entry"
+                    cost_scale = cost_scale[0]
+                c = self.c / cost_scale
                 # sequential weights
                 if self.seq_w:
                     w = np.zeros_like(m)
                     b = 0
                     for i in range(w.size):
-                        w[i] = soft(m[i], v[i], self.c, b)
+                        w[i] = soft(m[i], v[i], c, b)
                         b = w[i] # use current weight to condition the next step
                     if not live:
                         w = self.norm_w_1d(w)
@@ -103,16 +109,16 @@ class Optimal(Allocation):
                     else:
                         # adjust last entry
                         if prev_w is not None:                            
-                            w[-1] = soft(m[i], v[i], self.c, prev_w)    
+                            w[-1] = soft(m[i], v[i], c, prev_w)    
                         w = self.norm_w_1d(w)
                         return w[-1]
 
                 else:
                     w = np.zeros_like(m)
-                    idx = m>self.c 
-                    w[idx] = (m[idx]-self.c) / (v[idx]+m[idx]*m[idx])
-                    idx = m<-self.c 
-                    w[idx] = (m[idx]+self.c) / (v[idx]+m[idx]*m[idx])
+                    idx = m>c 
+                    w[idx] = (m[idx]-c) / (v[idx]+m[idx]*m[idx])
+                    idx = m<-c 
+                    w[idx] = (m[idx]+c) / (v[idx]+m[idx]*m[idx])
                     w = self.norm_w_1d(w)
                     if not live:
                         return np.atleast_2d(w.T).T   
