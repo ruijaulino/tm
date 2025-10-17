@@ -160,6 +160,10 @@ class HMM(BaseModel):
         # A initial mass (persistency)
         self.INIT_MASS = 0.9
 
+    def set_parameters(self, A, P):
+        self.A = A
+        self.P = P
+
     def view(self, plot_hist = False, **kwargs):
         '''
         plot_hist: if true, plot histograms, otherwise just show the parameters
@@ -359,16 +363,18 @@ class HMM(BaseModel):
                         prob[msidx[l][0]:msidx[l][1]],
                         self.A,
                         self.P,
-                        forward_alpha, 
-                        c
+                        forward_alpha[msidx[l][0]:msidx[l][1]], 
+                        c[msidx[l][0]:msidx[l][1]]
                         )
             pred_c[msidx[l][0]] = np.eye(p)
-            for i in range(msidx[l][0]+1, msidx[l][1]):
-                next_state_prob = np.dot(self.A.T, forward_alpha[i-1])  
-                xq = None if not x else x[i]
-                tq = None if not t else t[i]                                
+            # print(pred_c[msidx[l][0]])
+            for m in range(msidx[l][0]+1, msidx[l][1]):
+                next_state_prob = np.dot(self.A.T, forward_alpha[m-1])  
+                xq = None if not x else x[m]
+                tq = None if not t else t[m]                                
                 pred_m_, pred_c_ = self.emissions.posterior_predictive(next_state_prob = next_state_prob, xq = xq, tq = tq)
-                pred_m[i], pred_c[i] = np.atleast_1d(pred_m_), np.atleast_2d(pred_c_)
+                # print(m, pred_m_, pred_c_)
+                pred_m[m], pred_c[m] = np.atleast_1d(pred_m_), np.atleast_2d(pred_c_)
         return pred_m, pred_c
 
 
@@ -439,6 +445,10 @@ class uGaussianEmissions(HMMEmissions):
         self.prev_vn, self.prev_Sn = None, None 
         self.normalize = normalize
         self.w_norm = 1
+
+    def set_parameters(self, mean, var):
+        self.mean = mean
+        self.var = var
     
     def view(self, plot_hist = False, **kwargs):
         print('uGaussianEmissions')
@@ -579,6 +589,47 @@ class uGaussianEmissions(HMMEmissions):
         mix_var = np.dot(next_state_prob, self.var + self.mean*self.mean)
         return mix_mean, mix_var
 
+
+
+
+class FastTFHMM(BaseModel):
+    def __init__(
+                self,
+                p = 0.97,
+                **kwargs
+                ):
+
+        emissions = uGaussianEmissions(2)
+        self.hmm = HMM(
+                    emissions = emissions,
+                    )
+
+        self.P = np.array([0.5, 0.5])        
+        self.A = np.array([[p, 1-p],[1-p, p]])
+        self.hmm.set_parameters(A = self.A, P = self.P)
+
+    def view(self, **kwargs):
+        '''
+        plot_hist: if true, plot histograms, otherwise just show the parameters
+        '''
+        self.hmm.view()
+
+    def estimate(self, y, **kwargs):
+        if y.ndim == 2:
+            y = y[:,0]
+        mean = np.zeros(2)
+        var = np.ones(2)
+        idx = y<0
+        mean[0] = np.mean(y[idx])
+        var[0] = np.var(y[idx])        
+        mean[1] = np.mean(y[~idx])
+        var[1] = np.var(y[~idx])
+        self.hmm.emissions.set_parameters(mean = mean, var = var)
+
+    def posterior_predictive(self, y, **kwargs):
+        return self.hmm.posterior_predictive(y = y)
+
+
 # simple test
 if __name__ == '__main__':
     def simulate_hmm(n, A, mean, var):
@@ -607,10 +658,13 @@ if __name__ == '__main__':
                 emissions = emissions,
                 n_gibbs = 2000
                 )
+
+    hmm = FastTFHMM()
+
     print('estimate')
     hmm.estimate(y)
     print('done')
-    hmm.view(False)
+    hmm.view()
     print(hmm.posterior_predictive(y = y))
 
 
