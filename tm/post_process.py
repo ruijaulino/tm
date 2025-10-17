@@ -182,6 +182,9 @@ class Paths(list):
         return out
 
     def portfolio_post_process(self, pct_fee = 0., seq_fees = False, sr_mult = np.sqrt(250), n_boot = 1000, view_weights = True, use_pw = True, multiplier = 1, start_date = '', end_date = ''):
+
+
+
      
     
         if len(self) == 0:
@@ -202,6 +205,8 @@ class Paths(list):
         paths_s_datasets_boot = []
         
         for dataset in self:
+
+
 
             path_s=[]
             path_pw=[]
@@ -257,6 +262,14 @@ class Paths(list):
         lev = pd.concat(paths_leverage, axis = 1)
         net_lev = pd.concat(paths_net_leverage, axis = 1)
         n_datasets = pd.concat(paths_n_datasets, axis = 1)
+
+
+        # filter s
+        if start_date != '':
+            s = s[s.index>start_date]
+            lev = lev[lev.index>start_date]
+            net_lev = net_lev[net_lev.index>start_date]
+            n_datasets = n_datasets[n_datasets.index>start_date]
 
         out = s.copy(deep = True)
         out.columns = [f'path_{i+1}' for i in range(len(out.columns))]

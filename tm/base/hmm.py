@@ -87,12 +87,12 @@ class HMMEmissions(ABC):
         return self.n_states
     
     @abstractmethod
-    def gibbs_initialize(self, y:np.ndarray, x:np.ndarray = None, **kwargs):
+    def gibbs_initialize(self, y:np.ndarray, x:np.ndarray, t:np.ndarray, **kwargs):
         """Subclasses must implement this method"""
         pass
 
     @abstractmethod
-    def gibbs_posterior_sample(self, z:np.ndarray, y:np.ndarray, x:np.ndarray, iteration:int, **kwargs):
+    def gibbs_posterior_sample(self, z:np.ndarray, y:np.ndarray, x:np.ndarray, t:np.ndarray, iteration:int, **kwargs):
         """Subclasses must implement this method"""
         pass
 
@@ -102,20 +102,22 @@ class HMMEmissions(ABC):
         pass
 
     @abstractmethod
-    def gibbs_prob(self, prob:np.ndarray, y:np.ndarray, x:np.ndarray, iteration:int, **kwargs):
+    def gibbs_prob(self, prob:np.ndarray, y:np.ndarray, x:np.ndarray, t:np.ndarray, iteration:int, **kwargs):
         """Subclasses must implement this method"""
         pass
 
     @abstractmethod
-    def prob(self, y:np.ndarray, x:np.ndarray, **kwargs):
+    def prob(self, y:np.ndarray, x:np.ndarray, t:np.ndarray, **kwargs):
         """Subclasses must implement this method"""
         pass    
 
     @abstractmethod
-    def get_weight(self, next_state_prob:np.ndarray, xq:np.ndarray, **kwargs):
+    def posterior_predictive(self, next_state_prob:np.ndarray, xq:np.ndarray, tq:np.ndarray, **kwargs):
+    # def get_weight(self, next_state_prob:np.ndarray, xq:np.ndarray, **kwargs):
         """Subclasses must implement this method"""
         pass        
         
+
 class HMM(BaseModel):
     def __init__(
                 self,
@@ -199,9 +201,13 @@ class HMM(BaseModel):
             alphas.append(tmp)
         return alphas
     
-    def estimate(self, y:np.ndarray, x:np.ndarray = None, msidx = None, **kwargs):   
+    def estimate(self, y:np.ndarray, x:np.ndarray = None, t:np.ndarray = None, msidx = None, **kwargs):   
         # **
         # number of observations
+                
+        if y.ndim == 1:
+            y = np.array(y)[:,None]
+
         n = y.shape[0]
         # idx for multisequence
 
@@ -259,7 +265,7 @@ class HMM(BaseModel):
         self.gibbs_P[0] /= np.sum(self.gibbs_P[0])      
         
         # initialize emissions
-        self.emissions.gibbs_initialize(y = y, x = x)
+        self.emissions.gibbs_initialize(y = y, x = x, t = t)
         # **
         # create and initialize variable with
         # the states associated with each variable
@@ -275,7 +281,7 @@ class HMM(BaseModel):
             # **
             # evaluate the probability of each observation
             # this modifies prob variable!
-            self.emissions.gibbs_prob(prob = prob, y = y, x = x, iteration = i)            
+            self.emissions.gibbs_prob(prob = prob, y = y, x = x, t = t, iteration = i)            
             # **
             # sample form hidden state variable
             for l in range(n_seqs):
@@ -309,7 +315,7 @@ class HMM(BaseModel):
             # sample from initial state distribution
             self.gibbs_P[i] = np.random.dirichlet(self.ALPHA_P + init_state_counter)   
             # perform the gibbs step with the state sequence sample q
-            self.emissions.gibbs_posterior_sample(z = z, y = y, x = x, iteration = i)
+            self.emissions.gibbs_posterior_sample(z = z, y = y, x = x, t = t, iteration = i)
 
         # burn observations
         self.gibbs_A = self.gibbs_A[-self.n_gibbs:]
@@ -319,9 +325,15 @@ class HMM(BaseModel):
         self.A = np.mean(self.gibbs_A, axis = 0)
         self.P = np.mean(self.gibbs_P, axis = 0)
         # self.view(True)
-    
-    def _evaluate(self, y:np.ndarray, x:np.ndarray = None, msidx:np.ndarray = None, **kwargs):
-        n = y.shape[0]
+
+
+    def posterior_predictive(self, y:np.ndarray, x:np.ndarray = None, t:np.ndarray = None, msidx:np.ndarray = None, **kwargs):
+        
+        if y.ndim == 1:
+            y = np.array(y)[:,None]
+
+        n, p = y.shape
+        
         # idx for multisequence
         if msidx is None:
             msidx = np.array([[0, n]], dtype = int)
@@ -332,11 +344,15 @@ class HMM(BaseModel):
         # convert to integer to make sure this is well defined
         msidx = np.array(msidx, dtype = int)
         # number of sequences (now we are working on a table!)
-        n_seqs = msidx.shape[0]            
+        n_seqs = msidx.shape[0]     
         #
         forward_alpha = np.zeros((n, self.n_states), dtype = np.float64)
         c = np.zeros(n, dtype = np.float64)
-        prob = self.emissions.prob(y = y, x = x)  
+        prob = self.emissions.prob(y = y, x = x, t = t)          
+
+        pred_m = np.zeros((n, p))
+        pred_c = np.zeros((n, p, p))
+        
         for l in range(n_seqs):
             # compute alpha variable
             hmm_forward(
@@ -346,29 +362,65 @@ class HMM(BaseModel):
                         forward_alpha, 
                         c
                         )
+            pred_c[msidx[l][0]] = np.eye(p)
+            for i in range(msidx[l][0]+1, msidx[l][1]):
+                next_state_prob = np.dot(self.A.T, forward_alpha[i-1])  
+                xq = None if not x else x[i]
+                tq = None if not t else t[i]                                
+                pred_m_, pred_c_ = self.emissions.posterior_predictive(next_state_prob = next_state_prob, xq = xq, tq = tq)
+                pred_m[i], pred_c[i] = np.atleast_1d(pred_m_), np.atleast_2d(pred_c_)
+        return pred_m, pred_c
 
-        w = np.zeros_like(y)
-        for i in range(1, n):
-            next_state_prob = np.dot(self.A.T, forward_alpha[i-1])  
-            xq = None if not x else x[i]
-            w[i] = self.emissions.get_weight(next_state_prob = next_state_prob, xq = xq)
-        return np.atleast_2d(w.T).T     
+
+    # def _evaluate(self, y:np.ndarray, x:np.ndarray = None, msidx:np.ndarray = None, **kwargs):
+    #     n = y.shape[0]
+    #     # idx for multisequence
+    #     if msidx is None:
+    #         msidx = np.array([[0, n]], dtype = int)
+    #     else:
+    #         assert msidx.ndim == 1, "msidx must be a vector"
+    #         # convert into table
+    #         msidx = tm.utils.msidx_to_table(msidx)
+    #     # convert to integer to make sure this is well defined
+    #     msidx = np.array(msidx, dtype = int)
+    #     # number of sequences (now we are working on a table!)
+    #     n_seqs = msidx.shape[0]            
+    #     #
+    #     forward_alpha = np.zeros((n, self.n_states), dtype = np.float64)
+    #     c = np.zeros(n, dtype = np.float64)
+    #     prob = self.emissions.prob(y = y, x = x, t = t)  
+    #     for l in range(n_seqs):
+    #         # compute alpha variable
+    #         hmm_forward(
+    #                     prob[msidx[l][0]:msidx[l][1]],
+    #                     self.A,
+    #                     self.P,
+    #                     forward_alpha, 
+    #                     c
+    #                     )
+
+    #     w = np.zeros_like(y)
+    #     for i in range(1, n):
+    #         next_state_prob = np.dot(self.A.T, forward_alpha[i-1])  
+    #         xq = None if not x else x[i]
+    #         w[i] = self.emissions.get_weight(next_state_prob = next_state_prob, xq = xq)
+    #     return np.atleast_2d(w.T).T     
     
-    def get_weight(self,  y:np.ndarray, x:np.ndarray = None, xq:np.ndarray = None, **kwargs):
+    # def get_weight(self,  y:np.ndarray, x:np.ndarray = None, xq:np.ndarray = None, **kwargs):
         
-        n = y.shape[0]
-        prob = self.emissions.prob(y = y, x = x)  
-        forward_alpha = np.zeros((n, self.n_states), dtype = np.float64)
-        c = np.zeros(n, dtype = np.float64)
-        hmm_forward(
-                    prob,
-                    self.A,
-                    self.P,
-                    forward_alpha, 
-                    c
-                    )
-        next_state_prob = np.dot(self.A.T, forward_alpha[-1]) 
-        return self.emissions.get_weight(next_state_prob = next_state_prob, xq = xq)
+    #     n = y.shape[0]
+    #     prob = self.emissions.prob(y = y, x = x, t = t)  
+    #     forward_alpha = np.zeros((n, self.n_states), dtype = np.float64)
+    #     c = np.zeros(n, dtype = np.float64)
+    #     hmm_forward(
+    #                 prob,
+    #                 self.A,
+    #                 self.P,
+    #                 forward_alpha, 
+    #                 c
+    #                 )
+    #     next_state_prob = np.dot(self.A.T, forward_alpha[-1]) 
+    #     return self.emissions.get_weight(next_state_prob = next_state_prob, xq = xq)
 
 class uGaussianEmissions(HMMEmissions):
     def __init__(self, n_states = 2, n_gibbs:int = 1000, f_burn:float = 0.1, min_points_update = 5, normalize = True):
@@ -522,14 +574,10 @@ class uGaussianEmissions(HMMEmissions):
             prob[:, s] /= np.sqrt(2*np.pi*self.var[s])
         return prob
 
-    def get_weight(self, next_state_prob:np.ndarray, **kwargs):
+    def posterior_predictive(self, next_state_prob:np.ndarray, **kwargs):
         mix_mean = np.dot(next_state_prob, self.mean)
         mix_var = np.dot(next_state_prob, self.var + self.mean*self.mean)
-        # mix_var -= mix_mean*mix_mean
-        if self.normalize:
-            return mix_mean / mix_var / self.w_norm
-        else:
-            return mix_mean / mix_var
+        return mix_mean, mix_var
 
 # simple test
 if __name__ == '__main__':
@@ -559,9 +607,11 @@ if __name__ == '__main__':
                 emissions = emissions,
                 n_gibbs = 2000
                 )
+    print('estimate')
     hmm.estimate(y)
+    print('done')
     hmm.view(False)
-    print(hmm.get_weight(y = y))
+    print(hmm.posterior_predictive(y = y))
 
 
 
