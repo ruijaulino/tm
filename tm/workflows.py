@@ -34,7 +34,8 @@ def cvbt_path(
             start_fold:int = 0, 
             burn_fraction:float = 0.1, 
             min_burn_points:int = 3,
-            view_after_estimate:bool = False
+            view_after_estimate:bool = False,
+            plot:bool = False
             ) -> Dataset:
     
 
@@ -59,7 +60,7 @@ def cvbt_path(
         tmp_model_set.estimate(train_dataset)
         # estimate model - the results will be written in dataset because .between uses simple indexing
         if view_after_estimate:
-            tmp_model_set.view()
+            tmp_model_set.view(plot = plot)
         tmp_model_set.evaluate(test_dataset) #
         # set performance on dataset (maybe not needed because it will be already overriten! CHECK THIS)
     
@@ -74,7 +75,8 @@ def cvbt(
         start_fold:int = 0, 
         burn_fraction:float = 0.1, 
         min_burn_points:int = 3,
-        view_after_estimate:bool = False
+        view_after_estimate:bool = False,
+        plot:bool = False
         ) -> Paths:
     paths = Paths()
     for p in tqdm.tqdm(range(n_paths)):
@@ -86,7 +88,8 @@ def cvbt(
                             start_fold = start_fold, 
                             burn_fraction = burn_fraction, 
                             min_burn_points = min_burn_points,
-                            view_after_estimate = view_after_estimate
+                            view_after_estimate = view_after_estimate,
+                            plot = plot
                             )
         paths.add(path)
     return paths

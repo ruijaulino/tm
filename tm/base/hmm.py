@@ -1,4 +1,5 @@
 import numpy as np
+from scipy.stats import invgauss, invgamma, norm, gamma
 import matplotlib.pyplot as plt
 from tm.base import BaseModel
 from numba import jit
@@ -69,6 +70,31 @@ def hmm_backward_sample(A, alpha, z, transition_counter, init_state_counter):
     # increment initial state counter
     init_state_counter[z[0]] += 1
 
+
+
+# auxiliar function for univariate Laplace
+
+
+def sample_taus(x, mu, b, eps=1e-12):
+    d = np.abs(x - mu)
+    taus = np.empty_like(d)
+    # Case A: |x - mu| > 0  → sample u = 1/τ from IG, then invert
+    mask = d > eps
+    if np.any(mask):
+        mu_s = (b / d[mask])              # SciPy's 'mu' (shape)
+        scale = 1.0 / (b**2)              # SciPy's 'scale' = λ
+        u = invgauss.rvs(mu=mu_s, scale=scale, size=mask.sum())
+        taus[mask] = 1.0 / u
+    # Case B: |x - mu| = 0  → τ | d=0 ∝ τ^{-1/2} exp(-τ/(2 b^2))  = Gamma(1/2, rate=1/(2 b^2))
+    zero_mask = ~mask
+    if np.any(zero_mask):
+        shape = 0.5
+        rate = 1.0 / (2.0 * b**2)
+        scale_gamma = 1.0 / rate          # Gamma in SciPy is shape, scale
+        taus[zero_mask] = gamma.rvs(shape, scale=scale_gamma, size=zero_mask.sum())
+    return taus
+
+
 # Generic emissions class!
 class HMMEmissions(ABC):
 
@@ -118,6 +144,552 @@ class HMMEmissions(ABC):
         pass        
         
 
+# Generic base univariate emission class!
+class uHMMBaseEmission(ABC):
+
+    def set_gibbs_parameters(self, n_gibbs, f_burn, n_gibbs_sim = None):
+        self.n_gibbs = n_gibbs
+        self.f_burn = f_burn
+        aux = int(self.n_gibbs*(1+self.f_burn))
+        self.n_gibbs_sim = aux if n_gibbs_sim is None else n_gibbs_sim
+
+    def view(self, plot_hist:bool = False, plot:bool = False, **kwargs):
+        """Subclasses must implement this method"""
+        pass
+        
+    @abstractmethod
+    def gibbs_initialize(self, y:np.ndarray, x:np.ndarray, t:np.ndarray, **kwargs):
+        """Subclasses must implement this method"""
+        pass
+
+    @abstractmethod
+    def gibbs_posterior_sample(self, y:np.ndarray, x:np.ndarray, t:np.ndarray, iteration:int, **kwargs):
+        """Subclasses must implement this method"""
+        pass
+
+    @abstractmethod
+    def gibbs_burn_and_mean(self):
+        """Subclasses must implement this method"""
+        pass
+
+    @abstractmethod
+    def gibbs_prob(self, y:np.ndarray, x:np.ndarray, t:np.ndarray, iteration:int, **kwargs):
+        """Subclasses must implement this method"""
+        pass
+
+    @abstractmethod
+    def prob(self, y:np.ndarray, x:np.ndarray, t:np.ndarray, **kwargs):
+        """Subclasses must implement this method"""
+        pass    
+
+    @abstractmethod
+    def posterior_moments(self, **kwargs):
+    # def get_weight(self, next_state_prob:np.ndarray, xq:np.ndarray, **kwargs):
+        """Subclasses must implement this method"""
+        pass        
+        
+# Univariate emission models...
+
+class uBaseLaplaceEmission(uHMMBaseEmission):
+    def __init__(self, n_gibbs:int = 1000, f_burn:float = 0.1, min_points_update = 5):
+        self.LOWER = 1e-16
+        self.n_gibbs = n_gibbs
+        self.f_burn = f_burn
+        self.n_gibbs_sim = int(self.n_gibbs*(1+self.f_burn))
+        self.min_points_update = min_points_update
+
+    def view(self, plot_hist = False, plot = False, **kwargs):
+        print()
+        print('uBaseLaplaceEmission')
+        print('mean: ', self.mean)
+        print('b: ', self.b)
+        print()
+        pass
+    
+    def gibbs_initialize(self, y, **kwargs):
+        if y.ndim == 2:
+            assert y.shape[1] == 1, "uBaseLaplaceEmission only work for univariate observations"
+            y = y[:,0]
+        # Scale samples
+        self.gibbs_b = np.zeros(self.n_gibbs_sim) 
+        # Mean samples
+        self.gibbs_mean = np.zeros(self.n_gibbs_sim)          
+        
+        # compute data variance
+        y_var = np.var(y)
+        
+        self.gibbs_b[0] = np.sqrt(y_var) 
+        self.gibbs_mean[0] = np.mean(y)
+        
+        self.m0 = 0
+        self.s0 = 1000*y_var
+        self.alpha0 = 2
+        self.beta0 = 0.01*y_var   
+        
+        self.prev_mn = self.m0
+        self.prev_sn = self.s0
+        self.prev_alphan = self.alpha0
+        self.prev_betan = self.beta0
+        
+    def gibbs_posterior_sample(self, y:np.ndarray, iteration:int, **kwargs):
+        '''
+        y: current set of observations
+        to be called while in sampler
+        '''
+        # update each one
+        if y.ndim == 2:
+            assert y.shape[1] == 1, "uBaseLaplaceEmission only work for univariate observations"
+            y = y[:,0]        
+        assert 0 < iteration < self.n_gibbs_sim, "iteration is larger than the number of iterations"
+        # no observations in y
+        # for each state do the update
+        
+        if y.size < self.min_points_update:
+            b2 = invgamma.rvs(self.prev_alphan, scale=self.prev_betan)
+            self.gibbs_b[iteration] = np.sqrt(b2)              
+            self.gibbs_mean[iteration] = norm.rvs(self.prev_mn, self.prev_sn)
+        else:                
+            n = y.size
+            y_median = np.median(y)
+
+            tau = sample_taus(y, self.gibbs_mean[iteration-1], self.gibbs_b[iteration-1])
+
+            # 2) Update mu
+            prec = 1/self.s0**2 + np.sum(1/tau)
+            mean_mu = (self.m0/self.s0**2 + np.sum(y/tau)) / prec
+            self.gibbs_mean[iteration] = norm.rvs(mean_mu, np.sqrt(1/prec))
+
+            # 3) Update b^2
+            alpha = self.alpha0 + n
+            beta = self.beta0 + 0.5*np.sum(tau)
+            b2 = invgamma.rvs(alpha, scale=beta)
+            self.gibbs_b[iteration] = np.sqrt(b2)   
+
+            self.prev_mn = mean_mu
+            self.prev_sn = np.sqrt(1/prec)
+            self.prev_alphan = alpha
+            self.prev_betan = beta
+                
+    def gibbs_burn_and_mean(self):
+        self.gibbs_mean = self.gibbs_mean[-self.n_gibbs:]
+        self.gibbs_b = self.gibbs_b[-self.n_gibbs:] 
+        self.mean = np.mean(self.gibbs_mean)
+        self.b = np.mean(self.gibbs_b)
+        
+    def gibbs_prob(self, y:np.ndarray, iteration:int, **kwargs):
+        '''
+        changes prob array in place
+        '''
+        if y.ndim == 2:
+            assert y.shape[1] == 1, "uBaseLaplaceEmission only work for univariate observations"
+            y = y[:,0]    
+        assert 0 < iteration < self.n_gibbs_sim, "iteration is larger than the number of iterations"        
+        out = np.exp(-np.abs(y-self.gibbs_mean[iteration-1])/self.gibbs_b[iteration-1])
+        out /= (2*self.gibbs_b[iteration-1])
+        out[out < self.LOWER] = self.LOWER
+        return out
+    
+    def prob(self, y:np.ndarray, **kwargs):
+        '''
+        '''
+        if y.ndim == 2:
+            assert y.shape[1] == 1, "uBaseLaplaceEmission only work for univariate observations"
+            y = y[:,0]    
+        out = np.exp(-np.abs(y-self.mean)/self.b)
+        out /= (2*self.b)
+        return out
+
+    def posterior_moments(self, **kwargs):
+        return self.mean, 2*self.b*self.b
+    
+
+
+class uBaseGaussianEmission(uHMMBaseEmission):
+    def __init__(self, 
+                 n_gibbs:int = 1000, 
+                 f_burn:float = 0.1, 
+                 min_points_update = 5, 
+                 normalize = True):
+        self.LOWER = 1e-16
+        self.n_gibbs = n_gibbs
+        self.f_burn = f_burn
+        self.n_gibbs_sim = int(self.n_gibbs*(1+self.f_burn))
+        self.min_points_update = min_points_update
+
+    def view(self, plot_hist = False, plot = False, **kwargs):
+        print()
+        print('uBaseGaussianEmission')
+        print('mean: ', self.mean)
+        print('scale: ', np.sqrt(self.var))
+        print()
+        pass
+            
+    def gibbs_initialize(self, y, **kwargs):
+        if y.ndim == 2:
+            assert y.shape[1] == 1, "uBaseGaussianEmission only work for univariate observations"
+            y = y[:,0]
+        # this will be updated later
+        self.mean = 0         
+        # Covariance samples
+        self.gibbs_var = np.zeros(self.n_gibbs_sim) 
+        # Mean samples
+        self.gibbs_mean = np.zeros(self.n_gibbs_sim)          
+        # compute data variance
+        self.y_var = np.var(y)
+        self.y_scale = np.std(y)
+        # Prior distribution parameters
+        self.m0 = 0 
+        self.v0 = 1000*self.y_var # mean: prior covariance        
+        self.a0 = 2 # infinite variance...
+        self.b0 = 0.01*self.y_var
+        # initialize
+        self.gibbs_mean[0] = self.m0
+        self.gibbs_var[0] = self.y_var
+        # store parameters
+        self.prev_mn = self.m0
+        self.prev_vn = self.v0
+        
+        self.prev_an = self.a0
+        self.prev_bn = self.b0
+
+    def gibbs_posterior_sample(self, y:np.ndarray, iteration:int, **kwargs):
+        '''
+        y: current set of observations
+        to be called while in sampler
+        '''
+        # update each one
+        if y.ndim == 2:
+            assert y.shape[1] == 1, "uBaseGaussianEmission only work for univariate observations"
+            y = y[:,0]        
+        assert 0 < iteration < self.n_gibbs_sim, "iteration is larger than the number of iterations"
+        # no observations in y
+        # for each state do the update
+        
+        if y.size < self.min_points_update:
+            self.gibbs_mean[iteration] = np.random.normal(self.prev_mn, self.prev_vn)
+            self.gibbs_var[iteration] = 1 / np.random.gamma(self.prev_an, 1 / self.prev_bn)
+        else:                
+            n = y.size
+            y_sum = np.sum(y)            
+            # Sample from mean
+            mn = (self.m0*self.gibbs_var[iteration-1] + self.v0*y_sum)
+            mn /= (n*self.v0 + self.gibbs_var[iteration-1])            
+            vn = self.gibbs_var[iteration-1] * self.v0 / (n*self.v0 + self.gibbs_var[iteration-1])
+
+            self.prev_mn = mn
+            self.prev_vn = vn
+            self.gibbs_mean[iteration] = np.random.normal(mn, vn)
+            # Sample from variance
+            an = self.a0 + n/2
+            # bn = self.b0[s] + 0.5*np.sum(np.power(y[idx_states]-y_sum/n,2))
+            bn = self.b0 + 0.5*np.sum(np.power(y-self.gibbs_mean[iteration],2))
+            # non informative
+            self.prev_an = an
+            self.prev_bn = bn
+            self.gibbs_var[iteration] = 1 / np.random.gamma(an, 1 / bn)  
+
+    def gibbs_burn_and_mean(self):
+        self.gibbs_mean = self.gibbs_mean[-self.n_gibbs:]
+        self.gibbs_var = self.gibbs_var[-self.n_gibbs:] 
+        self.mean = np.mean(self.gibbs_mean)
+        self.var = np.mean(self.gibbs_var)
+    
+    def gibbs_prob(self, y:np.ndarray, iteration:int, **kwargs):
+        '''
+        changes prob array in place
+        '''
+        if y.ndim == 2:
+            assert y.shape[1] == 1, "uBaseGaussianEmission only work for univariate observations"
+            y = y[:,0]                
+        assert 0 < iteration < self.n_gibbs_sim, "iteration is larger than the number of iterations"        
+        out = np.exp(-0.5*np.power(y-self.gibbs_mean[iteration-1],2)/self.gibbs_var[iteration-1])
+        out /= np.sqrt(2*np.pi*self.gibbs_var[iteration-1])
+        out[out < self.LOWER] = self.LOWER
+        return out
+    
+    def prob(self, y:np.ndarray, **kwargs):
+        '''
+        '''
+        if y.ndim == 2:
+            assert y.shape[1] == 1, "uBaseGaussianEmission only work for univariate observations"
+            y = y[:,0]    
+        out = np.exp(-0.5*np.power(y-self.mean,2)/self.var)
+        out /= np.sqrt(2*np.pi*self.var)
+        return out
+    
+    def posterior_moments(self, **kwargs):
+        return self.mean, self.var
+    
+
+
+
+class uBaseGaussianMixtureEmission(uHMMBaseEmission):
+    def __init__(self, 
+                 k_components:int = 2, 
+                 n_gibbs:int = 1000, 
+                 f_burn:float = 0.1, 
+                 min_points_update = 5
+                ):
+        
+        self.LOWER = 1e-8        
+        self.k_components = k_components
+        self.n_gibbs = n_gibbs
+        self.f_burn = f_burn
+        self.n_gibbs_sim = int(self.n_gibbs*(1+self.f_burn))
+        self.min_points_update = min_points_update
+
+    def view(self, plot_hist = False, plot = False, **kwargs):
+        print('uBaseGaussianMixtureEmission')
+        print('phi: ', self.phi)
+        print('means: ', self.mean)
+        print('scales: ', np.sqrt(self.var))
+
+    def gibbs_initialize(self, y, **kwargs):
+        if y.ndim == 2:
+            assert y.shape[1] == 1, "uGaussianMixtureEmissions only work for univariate observations"
+            y = y[:,0]
+        # this will be updated later
+        self.mean = 0         
+        # Covariance samples
+        self.gibbs_var = np.zeros((self.n_gibbs_sim, self.k_components)) 
+        # Mean samples
+        self.gibbs_mean = np.zeros((self.n_gibbs_sim, self.k_components))   
+        # Phi samples
+        self.gibbs_phi = np.zeros((self.n_gibbs_sim, self.k_components))           
+        # compute data variance
+        self.y_var = np.var(y)
+        self.y_scale = np.std(y)
+        # Prior distribution parameters
+        self.m0 = np.zeros(self.k_components)
+        self.v0 = 1000*self.y_var*np.ones(self.k_components) # mean: prior covariance        
+        self.a0 = 2*np.ones(self.k_components) # infinite variance...
+        self.b0 = 0.01*self.y_var*np.ones(self.k_components)
+        # initialize
+        self.gibbs_mean[0] = self.m0
+        self.gibbs_var[0] = self.y_var
+        self.gibbs_phi[0] = 1 / float(self.k_components)
+        # store parameters
+        self.prev_mn = np.copy(self.m0)
+        self.prev_vn = np.copy(self.v0)
+        
+        self.prev_an = np.copy(self.a0)
+        self.prev_bn = np.copy(self.b0)
+        
+        self.prev_n_count = np.ones(self.k_components)
+
+    def gibbs_posterior_sample(self, y:np.ndarray, iteration:int, **kwargs):
+        '''
+        y: current set of observations
+        to be called while in sampler
+        '''
+        # update each one
+        if y.ndim == 2:
+            assert y.shape[1] == 1, "uGaussianMixtureEmissions only work for univariate observations"
+            y = y[:,0]        
+        assert 0 < iteration < self.n_gibbs_sim, "iteration is larger than the number of iterations"
+        # no observations in y
+        # for each state do the update
+        
+        if y.size < self.min_points_update:
+            for k in range(self.k_components):
+                self.gibbs_mean[iteration, k] = np.random.normal(self.prev_mn[k], self.prev_vn[k])
+                self.gibbs_var[iteration, k] = 1 / np.random.gamma(self.prev_an[k], 1 / self.prev_bn[k])
+            self.gibbs_phi[iteration] = np.random.dirichlet(self.prev_n_count + 1)
+        
+        else:                
+            n = y.size
+            # declare array
+            aux = np.zeros((n, self.k_components))                
+            # sample c
+            for k in range(self.k_components):
+                aux[:,k] = self.gibbs_phi[iteration-1, k] * np.exp(-0.5*np.power(y - self.gibbs_mean[iteration-1, k],2) / self.gibbs_var[iteration-1, k]) / np.sqrt(2*np.pi*self.gibbs_var[iteration-1, k])
+            
+            # this is a hack to sample fast from a multinomial with different probabilities!
+            aux[aux < self.LOWER] = self.LOWER
+            aux /= np.sum(aux, axis = 1)[:,None]
+            uni = np.random.uniform(0, 1, size = n)
+            aux = np.cumsum(aux, axis = 1)
+            wrows, wcols = np.where(aux > uni[:,None])
+            un, un_idx = np.unique(wrows, return_index = True)
+            c_ = wcols[un_idx]
+
+            # sample for each substate
+            n_count = np.zeros(self.k_components)
+            for k in range(self.k_components):
+                idx_states = np.where(c_ == k)[0]            
+                n_count[k] = idx_states.size 
+                if idx_states.size < self.min_points_update:
+                    self.gibbs_mean[iteration, k] = np.random.normal(self.prev_mn[k], self.prev_vn[k])
+                    self.gibbs_var[iteration, k] = 1 / np.random.gamma(self.prev_an[k], 1 / self.prev_bn[k])
+                else:                
+                    y_sum = np.sum(y[idx_states])            
+                    # Sample from mean
+                    mn = (self.m0[k]*self.gibbs_var[iteration-1, k] + self.v0[k]*y_sum)
+                    mn /= (n_count[k]*self.v0[k] + self.gibbs_var[iteration-1, k])            
+                    vn = self.gibbs_var[iteration-1, k] * self.v0[k] / (n_count[k]*self.v0[k] + self.gibbs_var[iteration-1, k])
+
+                    self.prev_mn[k] = mn
+                    self.prev_vn[k] = vn
+                    self.gibbs_mean[iteration, k] = np.random.normal(mn, vn)
+                    # Sample from variance
+                    an = self.a0[k] + n_count[k] / 2
+                    bn = self.b0[k] + 0.5*np.sum(np.power(y[idx_states]-self.gibbs_mean[iteration, k],2))
+                    self.prev_an[k] = an
+                    self.prev_bn[k] = bn
+                    self.gibbs_var[iteration, k] = 1 / np.random.gamma(an, 1 / bn)  
+            # update phis
+            self.gibbs_phi[iteration] = np.random.dirichlet(n_count + 1)
+            self.prev_n_count = n_count
+                
+    def gibbs_burn_and_mean(self):
+        self.gibbs_mean = self.gibbs_mean[-self.n_gibbs:]
+        self.gibbs_var = self.gibbs_var[-self.n_gibbs:] 
+        self.gibbs_phi = self.gibbs_phi[-self.n_gibbs:] 
+        
+        self.mean = np.mean(self.gibbs_mean, axis = 0)
+        self.var = np.mean(self.gibbs_var, axis = 0)
+        self.phi = np.mean(self.gibbs_phi, axis = 0)
+        
+        self.k_mean = np.dot(self.mean,self.phi)
+        self.k_var = np.dot(self.var, self.phi)
+        
+    def gibbs_prob(self, y:np.ndarray, iteration:int, **kwargs):
+        '''
+        changes prob array in place
+        '''
+        if y.ndim == 2:
+            assert y.shape[1] == 1, "uGaussianEmissions only work for univariate observations"
+            y = y[:,0]    
+        assert 0 < iteration < self.n_gibbs_sim, "iteration is larger than the number of iterations"        
+        out = np.zeros(y.size)
+        for k in range(self.k_components):
+            out += self.gibbs_phi[iteration-1, k] * np.exp(-0.5*np.power(y-self.gibbs_mean[iteration-1, k], 2)/self.gibbs_var[iteration-1, k]) / np.sqrt(2*np.pi * self.gibbs_var[iteration-1, k])
+        out[out < self.LOWER] = self.LOWER
+        return out
+    
+    def prob(self, y:np.ndarray, **kwargs):
+        '''
+        '''
+        if y.ndim == 2:
+            assert y.shape[1] == 1, "uGaussianEmissions only work for univariate observations"
+            y = y[:,0]    
+        out = np.zeros(y.size)
+        for k in range(self.k_components):
+            out += self.phi[k] * np.exp(-0.5*np.power(y-self.mean[k],2)/self.var[k]) / np.sqrt(2*np.pi*self.var[k])
+        out[out < self.LOWER] = self.LOWER
+        return out
+
+    def posterior_moments(self, **kwargs):
+        return self.k_mean, self.k_var
+    
+ 
+
+# Generic univariate emissions          
+class uHMMEmissions(HMMEmissions):
+    def __init__(self, 
+                 emissions:List[uHMMBaseEmission], 
+                 n_gibbs:int = 1000, 
+                 f_burn:float = 0.1, 
+                 min_points_update = 5, 
+                 normalize = True):
+        self.emissions = emissions
+        self.LOWER = 1e-16
+        self.n_gibbs = n_gibbs
+        self.f_burn = f_burn
+        self.n_gibbs_sim = int(self.n_gibbs*(1+self.f_burn))
+        self.min_points_update = min_points_update
+        self.n_states = len(self.emissions)
+
+    def set_parameters(self, mean, var):
+        self.mean = mean
+        self.var = var
+    
+    def view(self, plot_hist = False, plot = False, **kwargs):
+        print('uHMMEmissions')
+        for emission in self.emissions:
+            emission.view(plot_hist = plot_hist, plot = plot)
+    
+    def gibbs_initialize(self, y, **kwargs):
+        if y.ndim == 2:
+            assert y.shape[1] == 1, "uHMMEmissions only work for univariate observations"
+            y = y[:,0]
+        for emission in self.emissions:
+            emission.gibbs_initialize(y)
+
+    def gibbs_posterior_sample(self, z:np.ndarray, y:np.ndarray, iteration:int, **kwargs):
+        '''
+        y: current set of observations
+        to be called while in sampler
+        '''
+        # update each one
+        if y.ndim == 2:
+            assert y.shape[1] == 1, "uHMMEmissions only work for univariate observations"
+            y = y[:,0]        
+        assert 0 < iteration < self.n_gibbs_sim, "iteration is larger than the number of iterations"
+        # no observations in y
+        # for each state do the update
+        
+        for s, emission in enumerate(self.emissions):
+            idx_states = np.where(z == s)[0]  
+            emission.gibbs_posterior_sample(y[idx_states], iteration)
+            
+    def gibbs_burn_and_mean(self):
+        self.mean = np.zeros(self.n_states)
+        self.var = np.zeros(self.n_states)    
+        for s, emission in enumerate(self.emissions):
+            emission.gibbs_burn_and_mean()
+            self.mean[s], self.var[s] = emission.posterior_moments()
+        
+        
+    def gibbs_prob(self, prob:np.ndarray, y:np.ndarray, iteration:int, **kwargs):
+        '''
+        changes prob array in place
+        '''
+        if y.ndim == 2:
+            assert y.shape[1] == 1, "uHMMEmissions only work for univariate observations"
+            y = y[:,0]    
+        assert prob.shape[1] == self.n_states, "prob array does not match dimensions"                
+        assert 0 < iteration < self.n_gibbs_sim, "iteration is larger than the number of iterations"        
+        for s, emission in enumerate(self.emissions):
+            prob[:, s] = emission.gibbs_prob(y, iteration)
+        
+    def prob(self, y:np.ndarray, **kwargs):
+        '''
+        '''
+        if y.ndim == 2:
+            assert y.shape[1] == 1, "uHMMEmissions only work for univariate observations"
+            y = y[:,0]    
+        prob = np.zeros((y.shape[0], self.n_states))
+        for s, emission in enumerate(self.emissions):
+            prob[:, s] = emission.prob(y)
+        return prob
+
+    def posterior_predictive(self, next_state_prob:np.ndarray, **kwargs):
+        # create ar
+        mix_mean = np.dot(next_state_prob, self.mean)
+        mix_var = np.dot(next_state_prob, self.var + self.mean*self.mean)
+        return mix_mean, mix_var
+
+    # later delete
+    def get_n_states(self):
+        """Subclasses must implement this method"""
+        return self.n_states
+    
+    def set_gibbs_parameters(self, n_gibbs, f_burn, n_gibbs_sim = None):
+        self.n_gibbs = n_gibbs
+        self.f_burn = f_burn
+        aux = int(self.n_gibbs*(1+self.f_burn))
+        self.n_gibbs_sim = aux if n_gibbs_sim is None else n_gibbs_sim     
+        # set for each emission..
+        for emission in self.emissions:
+            emission.set_gibbs_parameters(self.n_gibbs, self.f_burn, self.n_gibbs_sim)                    
+        
+        
+
+
+
+
+
 class HMM(BaseModel):
     def __init__(
                 self,
@@ -164,7 +736,7 @@ class HMM(BaseModel):
         self.A = A
         self.P = P
 
-    def view(self, plot_hist = False, **kwargs):
+    def view(self, plot_hist = False, plot = False, **kwargs):
         '''
         plot_hist: if true, plot histograms, otherwise just show the parameters
         '''
@@ -193,7 +765,7 @@ class HMM(BaseModel):
             plt.legend()
             plt.grid(True)
             plt.show()
-        self.emissions.view(plot_hist = plot_hist)
+        self.emissions.view(plot_hist = plot_hist, plot = plot)
 
     def transitions_dirichlet_priors(self):
         alphas = []
@@ -450,10 +1022,15 @@ class uGaussianEmissions(HMMEmissions):
         self.mean = mean
         self.var = var
     
-    def view(self, plot_hist = False, **kwargs):
+    def view(self, plot_hist = False, plot = False, **kwargs):
         print('uGaussianEmissions')
         print('mean: ', self.mean)
-        print('var: ', self.var)
+        print('scale: ', np.sqrt(self.var))
+        if plot:
+            plt.plot(self.mean, '.-', label = 'Mean')
+            plt.plot(np.sqrt(self.var), '.-', label = 'Scale')
+            plt.legend()
+            plt.show()
         if plot_hist:
             for s in range(self.n_states):
                 plt.hist(
@@ -589,6 +1166,347 @@ class uGaussianEmissions(HMMEmissions):
         mix_var = np.dot(next_state_prob, self.var + self.mean*self.mean)
         return mix_mean, mix_var
 
+class uLaplaceEmissions(HMMEmissions):
+    def __init__(self, n_states = 2, n_gibbs:int = 1000, f_burn:float = 0.1, min_points_update = 5):
+        self.LOWER = 1e-16
+        self.n_gibbs = n_gibbs
+        self.f_burn = f_burn
+        self.n_gibbs_sim = int(self.n_gibbs*(1+self.f_burn))
+        self.min_points_update = min_points_update
+        self.n_states = n_states
+        # variables to be computed
+        self.var = None
+        self.mean = None        
+        self.S0aux = None
+        self.invV0, self.invV0m0 = None, None
+        self.prev_mn, self.prev_Vn = None, None
+        self.prev_vn, self.prev_Sn = None, None 
+
+    def set_parameters(self, mean, var):
+        self.mean = mean
+        self.var = var
+    
+    def view(self, plot_hist = False, plot = False, **kwargs):
+        print('uLaplaceEmissions')
+        print('mean: ', self.mean)
+        print('scale: ', self.b)
+        if plot:
+            plt.plot(self.mean, '.-', label = 'Mean')
+            plt.plot(self.b, '.-', label = 'Scale')
+            plt.legend()
+            plt.show()
+    
+    def gibbs_initialize(self, y, **kwargs):
+        if y.ndim == 2:
+            assert y.shape[1] == 1, "uGaussianEmissions only work for univariate observations"
+            y = y[:,0]
+        # Scale samples
+        self.gibbs_b = np.zeros((self.n_gibbs_sim, self.n_states)) 
+        # Mean samples
+        self.gibbs_mean = np.zeros((self.n_gibbs_sim, self.n_states))          
+        
+        # compute data variance
+        y_var = np.var(y)
+        
+        self.gibbs_b[0] = np.sqrt(y_var) 
+        self.gibbs_mean[0] = np.mean(y)
+        
+        self.m0 = 0
+        self.s0 = 1000*y_var
+        self.alpha0 = 2
+        self.beta0 = 0.01*y_var   
+        
+        self.prev_mn = self.m0*np.ones(self.n_states)
+        self.prev_sn = self.s0*np.ones(self.n_states)
+        self.prev_alphan = self.alpha0*np.ones(self.n_states)
+        self.prev_betan = self.beta0*np.ones(self.n_states)
+        
+    def gibbs_posterior_sample(self, z:np.ndarray, y:np.ndarray, iteration:int, **kwargs):
+        '''
+        y: current set of observations
+        to be called while in sampler
+        '''
+        # update each one
+        if y.ndim == 2:
+            assert y.shape[1] == 1, "uGaussianEmissions only work for univariate observations"
+            y = y[:,0]        
+        assert 0 < iteration < self.n_gibbs_sim, "iteration is larger than the number of iterations"
+        # no observations in y
+        # for each state do the update
+        
+        for s in range(self.n_states):
+            idx_states = np.where(z == s)[0]            
+            if idx_states.size < self.min_points_update:
+                b2 = invgamma.rvs(self.prev_alphan[s], scale=self.prev_betan[s])
+                self.gibbs_b[iteration, s] = np.sqrt(b2)              
+                self.gibbs_mean[iteration, s] = norm.rvs(self.prev_mn[s], self.prev_sn[s])
+            else:                
+                n = idx_states.size
+                
+                y_ = y[idx_states]
+                y_median = np.median(y_)
+                
+                tau = sample_taus(y_, self.gibbs_mean[iteration-1, s], self.gibbs_b[iteration-1, s])
+
+                # 2) Update mu
+                prec = 1/self.s0**2 + np.sum(1/tau)
+                mean_mu = (self.m0/self.s0**2 + np.sum(y_/tau)) / prec
+                self.gibbs_mean[iteration, s] = norm.rvs(mean_mu, np.sqrt(1/prec))
+
+                # 3) Update b^2
+                alpha = self.alpha0 + n
+                beta = self.beta0 + 0.5*np.sum(tau)
+                b2 = invgamma.rvs(alpha, scale=beta)
+                self.gibbs_b[iteration, s] = np.sqrt(b2)   
+
+                self.prev_mn[s] = mean_mu
+                self.prev_sn[s] = np.sqrt(1/prec)
+                self.prev_alphan[s] = alpha
+                self.prev_betan[s] = beta
+                
+                
+                
+    def gibbs_burn_and_mean(self):
+        self.gibbs_mean = self.gibbs_mean[-self.n_gibbs:]
+        self.gibbs_b = self.gibbs_b[-self.n_gibbs:] 
+        self.mean = np.mean(self.gibbs_mean, axis = 0)
+        self.b = np.mean(self.gibbs_b, axis = 0)
+        
+    def gibbs_prob(self, prob:np.ndarray, y:np.ndarray, iteration:int, **kwargs):
+        '''
+        changes prob array in place
+        '''
+        if y.ndim == 2:
+            assert y.shape[1] == 1, "uGaussianEmissions only work for univariate observations"
+            y = y[:,0]    
+        assert prob.shape[1] == self.n_states, "prob array does not match dimensions"                
+        assert 0 < iteration < self.n_gibbs_sim, "iteration is larger than the number of iterations"        
+        for s in range(self.n_states):
+            prob[:, s] = np.exp(-np.abs(y-self.gibbs_mean[iteration-1, s])/self.gibbs_b[iteration-1, s])
+            prob[:, s] /= (2*self.gibbs_b[iteration-1, s])
+        prob[prob < self.LOWER] = self.LOWER
+        
+    def prob(self, y:np.ndarray, **kwargs):
+        '''
+        '''
+        if y.ndim == 2:
+            assert y.shape[1] == 1, "uGaussianEmissions only work for univariate observations"
+            y = y[:,0]    
+        prob = np.zeros((y.shape[0], self.n_states))
+        for s in range(self.n_states):
+            prob[:, s] = np.exp(-np.abs(y-self.mean[s])/self.b[s])
+            prob[:, s] /= (2*self.b[s])
+        return prob
+
+    def posterior_predictive(self, next_state_prob:np.ndarray, **kwargs):
+        mix_mean = np.dot(next_state_prob, self.mean)
+        mix_var = np.dot(next_state_prob, 2*self.b*self.b + self.mean*self.mean)
+        return mix_mean, mix_var
+
+
+class uGaussianMixtureEmissions(HMMEmissions):
+    def __init__(self, 
+                 n_states:int = 2, 
+                 k_components:int = 2, 
+                 n_gibbs:int = 1000, 
+                 f_burn:float = 0.1, 
+                 min_points_update = 5
+                ):
+        
+        self.LOWER = 1e-8
+        
+        self.n_states = n_states
+        self.k_components = k_components
+        self.n_gibbs = n_gibbs
+        self.f_burn = f_burn
+        self.n_gibbs_sim = int(self.n_gibbs*(1+self.f_burn))
+        self.min_points_update = min_points_update
+        
+        # variables to be computed
+        self.var = None
+        self.mean = None        
+        self.phi = None
+        self.S0aux = None
+        self.invV0, self.invV0m0 = None, None
+        self.prev_mn, self.prev_Vn = None, None
+        self.prev_vn, self.prev_Sn = None, None 
+    
+    def view(self, plot_hist = False, plot = False, **kwargs):
+        print('uGaussianMixtureEmissions')
+        print('phi: ', self.phi)
+        print('means: ', self.mean)
+        print('scales: ', np.sqrt(self.var))
+        print()
+        print('k mean: ', self.k_mean)
+        print('k scale: ', np.sqrt(self.k_var))
+        print()
+        if plot:
+            for i in range(self.n_states):
+                k_std = 3
+                x_pdf_min = np.min(self.mean[i] - k_std*np.sqrt(self.var[i]))
+                x_pdf_max = np.max(self.mean[i] + k_std*np.sqrt(self.var[i]))
+                x_pdf = np.linspace(x_pdf_min, x_pdf_max, 500)
+                pdf = np.zeros_like(x_pdf)
+                for k in range(self.k_components):
+                    pdf += self.phi[i,k] * np.exp(-0.5*np.power(x_pdf-self.mean[i,k],2)/self.var[i,k])/np.sqrt(2*np.pi*self.var[i,k])
+                plt.plot(x_pdf, pdf, label = f'Mix distribution for state {i+1}')
+                plt.legend()
+                plt.show()
+                
+    def gibbs_initialize(self, y, **kwargs):
+        if y.ndim == 2:
+            assert y.shape[1] == 1, "uGaussianMixtureEmissions only work for univariate observations"
+            y = y[:,0]
+        # this will be updated later
+        self.mean = 0         
+        # Covariance samples
+        self.gibbs_var = np.zeros((self.n_gibbs_sim, self.n_states, self.k_components)) 
+        # Mean samples
+        self.gibbs_mean = np.zeros((self.n_gibbs_sim, self.n_states, self.k_components))   
+        # Phi samples
+        self.gibbs_phi = np.zeros((self.n_gibbs_sim, self.n_states, self.k_components))           
+        # compute data variance
+        self.y_var = np.var(y)
+        self.y_scale = np.std(y)
+        # Prior distribution parameters
+        self.m0 = np.zeros((self.n_states, self.k_components))
+        self.v0 = 1000*self.y_var*np.ones((self.n_states, self.k_components)) # mean: prior covariance        
+        self.a0 = 2*np.ones((self.n_states, self.k_components)) # infinite variance...
+        self.b0 = 0.01*self.y_var*np.ones((self.n_states, self.k_components))        
+        # initialize
+        self.gibbs_mean[0] = self.m0
+        self.gibbs_var[0] = self.y_var# *np.ones((self.n_states)
+        self.gibbs_phi[0] = 1 / float(self.k_components)
+        # store parameters
+        self.prev_mn = np.copy(self.m0)
+        self.prev_vn = np.copy(self.v0)
+        
+        self.prev_an = np.copy(self.a0)
+        self.prev_bn = np.copy(self.b0)
+        
+        self.prev_n_count = np.ones(self.k_components)
+
+    def gibbs_posterior_sample(self, z:np.ndarray, y:np.ndarray, iteration:int, **kwargs):
+        '''
+        y: current set of observations
+        to be called while in sampler
+        '''
+        # update each one
+        if y.ndim == 2:
+            assert y.shape[1] == 1, "uGaussianMixtureEmissions only work for univariate observations"
+            y = y[:,0]        
+        assert 0 < iteration < self.n_gibbs_sim, "iteration is larger than the number of iterations"
+        # no observations in y
+        # for each state do the update
+        
+        for s in range(self.n_states):
+            idx_states = np.where(z == s)[0]            
+            if idx_states.size < self.min_points_update:
+                for k in range(self.k_components):
+                    self.gibbs_mean[iteration, s, k] = np.random.normal(self.prev_mn[s, k], self.prev_vn[s, k])
+                    self.gibbs_var[iteration, s, k] = 1 / np.random.gamma(self.prev_an[s, k], 1 / self.prev_bn[s, k])
+                self.gibbs_phi[iteration, s] = np.random.dirichlet(self.prev_n_count + 1)
+            else:                
+                n = idx_states.size
+                y_ = y[idx_states]
+                # declare array
+                aux = np.zeros((n, self.k_components))                
+                # sample c
+                for k in range(self.k_components):
+                    aux[:,k] = self.gibbs_phi[iteration-1, s, k] * np.exp(-0.5*np.power(y_ - self.gibbs_mean[iteration-1, s, k],2) / self.gibbs_var[iteration-1, s, k]) / np.sqrt(2*np.pi*self.gibbs_var[iteration-1, s, k])
+                    # aux[:,j] = self.gibbs_phi[iteration-1, s, k] * np.exp(-0.5*np.power(y_ - self.gibbs_mean[iteration-1, s, k],2) / self.gibbs_var[iteration-1, s, k]) / np.sqrt(2*np.pi*self.gibbs_var[iteration-1, s, k])
+                
+                # this is a hack to sample fast from a multinomial with different probabilities!
+                aux[aux < self.LOWER] = self.LOWER
+                aux /= np.sum(aux, axis = 1)[:,None]
+                uni = np.random.uniform(0, 1, size = n)
+                aux = np.cumsum(aux, axis = 1)
+                wrows, wcols = np.where(aux > uni[:,None])
+                un, un_idx = np.unique(wrows, return_index = True)
+                c_ = wcols[un_idx]
+                
+                # sample for each substate
+                n_count = np.zeros(self.k_components)
+                for k in range(self.k_components):
+                    idx_states_ = np.where(c_ == k)[0]            
+                    n_count[k] = idx_states_.size 
+                    if idx_states.size < self.min_points_update:
+                        # TODO!
+                        self.gibbs_mean[iteration, s, k] = np.random.normal(self.prev_mn[s, k], self.prev_vn[s, k])
+                        self.gibbs_var[iteration, s, k] = 1 / np.random.gamma(self.prev_an[s, k], 1 / self.prev_bn[s, k])
+                    else:                
+                        y_sum_ = np.sum(y_[idx_states_])            
+                        # Sample from mean
+                        mn = (self.m0[s, k]*self.gibbs_var[iteration-1, s, k] + self.v0[s, k]*y_sum_)
+                        mn /= (n_count[k]*self.v0[s, k] + self.gibbs_var[iteration-1, s, k])            
+                        vn = self.gibbs_var[iteration-1, s, k] * self.v0[s, k] / (n_count[k]*self.v0[s, k] + self.gibbs_var[iteration-1, s, k])
+                        
+                        self.prev_mn[s, k] = mn
+                        self.prev_vn[s, k] = vn
+                        self.gibbs_mean[iteration, s, k] = np.random.normal(mn, vn)
+                        # Sample from variance
+                        an = self.a0[s, k] + n_count[k] / 2
+                        bn = self.b0[s, k] + 0.5*np.sum(np.power(y_[idx_states_]-self.gibbs_mean[iteration, s, k],2))
+                        self.prev_an[s, k] = an
+                        self.prev_bn[s, k] = bn
+                        self.gibbs_var[iteration, s, k] = 1 / np.random.gamma(an, 1 / bn)  
+                # update phis
+                self.gibbs_phi[iteration, s] = np.random.dirichlet(n_count + 1)
+                self.prev_n_count = n_count
+                
+    def gibbs_burn_and_mean(self):
+        self.gibbs_mean = self.gibbs_mean[-self.n_gibbs:]
+        self.gibbs_var = self.gibbs_var[-self.n_gibbs:] 
+        self.gibbs_phi = self.gibbs_phi[-self.n_gibbs:] 
+        
+        self.mean = np.mean(self.gibbs_mean, axis = 0)
+        self.var = np.mean(self.gibbs_var, axis = 0)
+        self.phi = np.mean(self.gibbs_phi, axis = 0)
+        
+        self.k_mean = np.sum(self.mean*self.phi, axis = 1)
+        self.k_var = np.sum(self.var*self.phi, axis = 1)
+        
+    
+    def gibbs_prob(self, prob:np.ndarray, y:np.ndarray, iteration:int, **kwargs):
+        '''
+        changes prob array in place
+        '''
+        if y.ndim == 2:
+            assert y.shape[1] == 1, "uGaussianEmissions only work for univariate observations"
+            y = y[:,0]    
+        assert prob.shape[1] == self.n_states, "prob array does not match dimensions"                
+        assert 0 < iteration < self.n_gibbs_sim, "iteration is larger than the number of iterations"        
+        for s in range(self.n_states):
+            # set to zero..
+            prob[:, s] *= 0
+            for k in range(self.k_components):
+                tmp = np.exp(-0.5*np.power(y-self.gibbs_mean[iteration-1, s, k], 2)/self.gibbs_var[iteration-1, s, k])
+                tmp /= np.sqrt(2*np.pi * self.gibbs_var[iteration-1, s, k])
+                tmp *= self.gibbs_phi[iteration-1, s, k]                
+                prob[:, s] += tmp
+        prob[prob < self.LOWER] = self.LOWER
+
+                
+    def prob(self, y:np.ndarray, **kwargs):
+        '''
+        '''
+        if y.ndim == 2:
+            assert y.shape[1] == 1, "uGaussianEmissions only work for univariate observations"
+            y = y[:,0]    
+        prob = np.zeros((y.shape[0], self.n_states))
+        for s in range(self.n_states):
+            for k in range(self.k_components):
+                tmp = np.exp(-0.5*np.power(y-self.mean[s, k],2)/self.var[s, k])
+                tmp /= np.sqrt(2*np.pi*self.var[s, k])
+                tmp *= self.phi[s, k]
+                prob[:, s] += tmp
+        prob[prob < self.LOWER] = self.LOWER
+        return prob
+
+    def posterior_predictive(self, next_state_prob:np.ndarray, **kwargs):
+        mix_mean = np.dot(next_state_prob, self.k_mean)
+        mix_var = np.dot(next_state_prob, self.k_var + self.k_mean*self.k_mean)
+        return mix_mean, mix_var
 
 
 
