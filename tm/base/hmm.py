@@ -84,6 +84,7 @@ def sample_taus(x, mu, b, eps=1e-12):
         mu_s = (b / d[mask])              # SciPy's 'mu' (shape)
         scale = 1.0 / (b**2)              # SciPy's 'scale' = λ
         u = invgauss.rvs(mu=mu_s, scale=scale, size=mask.sum())
+        u[u<1e10] = 1e10
         taus[mask] = 1.0 / u
     # Case B: |x - mu| = 0  → τ | d=0 ∝ τ^{-1/2} exp(-τ/(2 b^2))  = Gamma(1/2, rate=1/(2 b^2))
     zero_mask = ~mask
@@ -905,6 +906,7 @@ class HMM(BaseModel):
 
     def posterior_predictive(self, y:np.ndarray, x:np.ndarray = None, t:np.ndarray = None, msidx:np.ndarray = None, **kwargs):
         
+    
         if y.ndim == 1:
             y = np.array(y)[:,None]
 

@@ -96,19 +96,22 @@ class Model:
         
         # apply transforms on whole data (it creates a copy if transformations are applied)
         # this prevents too much copies when iterating over the arrays
-        transformed_data = self.transforms.transform(data)
+        
+        if not data.empty:
 
-        # compute the posterior predictive on data
-        # this will generate arrays mu and cov that correspond to each point in data.y
-        mu, cov = self.base_model.posterior_predictive(**transformed_data.as_dict())        
-        if mu.ndim == 1:
-            mu = mu.reshape((mu.size, 1))
-        if cov.ndim == 1:
-            cov = cov.reshape((cov.size, 1, 1))
-        w = self.allocation.get_weight(mu, cov, cost_scale = self.transforms.cost_scale())        
-        # set on original data!
-        data.w[:] = w
-        data.s[:] = np.einsum('ij,ij->i', w, data.y)
+            transformed_data = self.transforms.transform(data)
+
+            # compute the posterior predictive on data
+            # this will generate arrays mu and cov that correspond to each point in data.y
+            mu, cov = self.base_model.posterior_predictive(**transformed_data.as_dict())        
+            if mu.ndim == 1:
+                mu = mu.reshape((mu.size, 1))
+            if cov.ndim == 1:
+                cov = cov.reshape((cov.size, 1, 1))
+            w = self.allocation.get_weight(mu, cov, cost_scale = self.transforms.cost_scale())        
+            # set on original data!
+            data.w[:] = w
+            data.s[:] = np.einsum('ij,ij->i', w, data.y)
         
         return data
 
