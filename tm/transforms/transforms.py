@@ -41,5 +41,33 @@ class ScaleTransform(Transform):
         else:
             return arr * self.scale
 
+
+# Transform class
+class DemeanTransform(Transform):
+    
+    def __init__(self):
+        self.mean = 0
+
+    def view(self):
+        print('** Demean Transform **')
+        print('mean: ', self.mean)
+
+    def cost_scale(self):
+        return 1
+
+    def estimate(self, arr:np.ndarray, **kwargs):
+        """Subclasses must implement this method"""        
+        if arr.shape[0] != 0:
+            self.mean = np.mean(arr, axis = 0)
+
+    def transform(self, arr:np.ndarray, **kwargs):
+        """Subclasses must implement this method"""
+        return arr - self.mean
+    
+    def inverse_transform(self, arr:np.ndarray, **kwargs):
+        """Subclasses must implement this method"""
+        return arr + self.mean
+        
+
 if __name__ == '__main__':
     pass

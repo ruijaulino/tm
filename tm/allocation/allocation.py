@@ -65,14 +65,30 @@ class Optimal(Allocation):
                 if self.w_norm == 0: self.w_norm = 1
             else:
                 self.w_norm = 1
+
         else:
-            raise Exception('Optimal for p>1 not yet implemented')
+            cov_inv = np.linalg.inv(cov)
+            m = cov_inv + np.einsum('ni,nj->nij', mu, mu) 
+            w = np.einsum('nij,ni->nj', m, mu)
+            if w.shape[0] != 0:
+                self.w_norm = np.quantile(np.sum(np.abs(w), axis = 1), self.quantile, method = 'closest_observation') # using this method also work for state models
+                if self.w_norm == 0: self.w_norm = 1
+            else:
+                self.w_norm = 1
+            #raise Exception('Optimal for p>1 not yet implemented')
     
     def norm_w_1d(self, w):
         w /= self.w_norm
         idx = np.abs(w) > self.max_w
         w[idx] = np.sign(w[idx])*self.max_w
         return w
+
+    def norm_w_2d(self, w):
+        w /= self.w_norm
+        idx = np.sum(np.abs(w), axis = 1) > self.max_w
+        w[idx] /= np.sum(np.abs(w[idx]), axis = 1)[:,None] #np.sign(w[idx])*self.max_w
+        return w
+        
 
     def get_weight(self, mu, cov, cost_scale = 1, live = False, prev_w = None, **kwargs):                
         p = mu.shape[1]
@@ -126,9 +142,14 @@ class Optimal(Allocation):
                         return w[-1]
                         
         else:
-            raise Exception('Optimal for p>1 not yet implemented')
-
-
+            cov_inv = np.linalg.inv(cov)
+            m = cov_inv + np.einsum('ni,nj->nij', mu, mu) 
+            w = np.einsum('nij,ni->nj', m, mu)
+            w = self.norm_w_2d(w)
+            if not live:
+                return np.atleast_2d(w.T).T   
+            else:
+                return w[-1]
 
 if __name__ == '__main__':
     np.random.seed(0)

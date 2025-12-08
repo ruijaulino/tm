@@ -12,10 +12,65 @@ def rollvar(y, f):
     v = np.convolve(ysq, f, mode='full')[:len(ysq)]
     return v
 
+
+def apply_filter(z, f):
+    # Ensure f is normalized to sum to 1
+    f = f / f.sum()
+    # np.convolve flips filter internally
+    zs = np.convolve(z, f, mode='full')[:len(z)]
+    return zs
+
+def rollvar(y, f):
+    ysq = y * y
+    return apply_filter(y*y, f)
+
+def rollmean(y, f):
+    return apply_filter(y, f)
+
 def predictive_rollvar(y, f):
     v = rollvar(y, f)
     v = np.hstack((v[0], v[:-1]))
     return v
+
+def predictive_rollmean(y, f):
+    m = rollmean(y, f)
+    m = np.hstack((m[0], m[:-1]))
+    return m
+
+
+
+class RollMean(BaseModel):
+    def __init__(self, phi = 0.95, phi_frac_cover = 0.95, reversion = False):
+        self.phi = phi
+        self.phi_frac_cover = min(phi_frac_cover, 0.9999)
+        self.reversion = reversion
+
+    def view(self, **kwargs):
+        pass
+
+    def estimate(self, **kwargs):
+        pass
+
+    def posterior_predictive(self, y, is_live = False, **kwargs):
+        if y.ndim == 2:
+            assert y.shape[1] == 1, "y must contain a single target for RollMean model"
+            y = y[:, 0]          
+
+        if y.size != 0:
+            # create filter
+            k_f = np.log(1-self.phi_frac_cover)/np.log(self.phi) - 1
+            f = (1-self.phi)*np.power(self.phi, np.arange(int(k_f)+1))
+            m = predictive_rollmean(y, f)
+            if self.reversion:
+                m*=-1
+            # burn some observations
+            if is_live and y.size < f.size:
+                print('Data is not enough for live. Return zero weight...')
+            m[:f.size] = 0
+            return m, np.ones_like(y)        
+        else:
+            return np.zeros_like(y), np.ones_like(y)
+
 
 
 class RollVar(BaseModel):
@@ -59,6 +114,7 @@ class RollVar(BaseModel):
             return m, v
         else:
             return np.zeros_like(y), np.ones_like(y)
+
 
 
 class RollVarLinRegr(RollVar):

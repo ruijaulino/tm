@@ -1,4 +1,4 @@
 from .abstract import Transform, Transforms 
-from .transforms import ScaleTransform
+from .transforms import ScaleTransform, DemeanTransform
 
 

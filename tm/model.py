@@ -98,8 +98,7 @@ class Model:
         # this prevents too much copies when iterating over the arrays
         
         if not data.empty:
-
-            transformed_data = self.transforms.transform(data)
+            transformed_data = self.transform(data)
 
             # compute the posterior predictive on data
             # this will generate arrays mu and cov that correspond to each point in data.y
