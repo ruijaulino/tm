@@ -40,9 +40,10 @@ def predictive_rollmean(y, f):
 
 
 class RollMean(BaseModel):
-    def __init__(self, phi = 0.95, phi_frac_cover = 0.95, reversion = False):
+    def __init__(self, phi = 0.95, phi_frac_cover = 0.95, reversion = False, min_points = 10):
         self.phi = phi
         self.phi_frac_cover = min(phi_frac_cover, 0.9999)
+        self.min_points = min_points
         self.reversion = reversion
 
     def view(self, **kwargs):
@@ -66,7 +67,7 @@ class RollMean(BaseModel):
             # burn some observations
             if is_live and y.size < f.size:
                 print('Data is not enough for live. Return zero weight...')
-            m[:f.size] = 0
+            m[:min(f.size,self.min_points)] = 0
             return m, np.ones_like(y)        
         else:
             return np.zeros_like(y), np.ones_like(y)
@@ -77,11 +78,18 @@ class RollVar(BaseModel):
     def __init__(self, 
                  base_model:BaseModel,
                  phi = 0.95,  
-                 phi_frac_cover = 0.95
+                 phi_frac_cover = 0.95,
+                 min_points = 10,
                 ):
         self.phi = phi
         self.phi_frac_cover = min(phi_frac_cover, 0.9999)
-        self.base_model = base_model 
+        self.min_points = min_points
+        self.base_model = base_model
+        try:
+            if self.base_model.min_points != self.min_points:
+                print('Warning: setting min_points in RollVar different than in base_model')
+        except:
+            pass 
     
     def view(self, plot = False, **kwargs):
         self.base_model.view(plot = plot)
@@ -109,8 +117,8 @@ class RollVar(BaseModel):
             # burn some observations
             if is_live and y.size < f.size:
                 print('Data is not enough for live. Return zero weight...')
-            m[:f.size] = 0
-            v[:f.size] = 1
+            # m[:f.size] = 0
+            v[:min(f.size,self.min_points)] = 1
             return m, v
         else:
             return np.zeros_like(y), np.ones_like(y)
