@@ -40,11 +40,12 @@ def predictive_rollmean(y, f):
 
 
 class RollMean(BaseModel):
-    def __init__(self, phi = 0.95, phi_frac_cover = 0.95, reversion = False, min_points = 10):
+    def __init__(self, phi = 0.95, phi_frac_cover = 0.95, reversion = False, min_points = 10, long_only = False):
         self.phi = phi
         self.phi_frac_cover = min(phi_frac_cover, 0.9999)
         self.min_points = min_points
         self.reversion = reversion
+        self.long_only = long_only
 
     def view(self, **kwargs):
         pass
@@ -64,6 +65,8 @@ class RollMean(BaseModel):
             m = predictive_rollmean(y, f)
             if self.reversion:
                 m*=-1
+            if self.long_only:
+                m[m<0] = 0
             # burn some observations
             if is_live and y.size < f.size:
                 print('Data is not enough for live. Return zero weight...')
@@ -114,6 +117,7 @@ class RollVar(BaseModel):
             k_f = np.log(1-self.phi_frac_cover)/np.log(self.phi) - 1
             f = (1-self.phi)*np.power(self.phi, np.arange(int(k_f)+1))
             v = predictive_rollvar(y, f)
+            v[v == 0] = 1e8
             # burn some observations
             if is_live and y.size < f.size:
                 print('Data is not enough for live. Return zero weight...')
@@ -122,6 +126,52 @@ class RollVar(BaseModel):
             return m, v
         else:
             return np.zeros_like(y), np.ones_like(y)
+
+
+class RollInvVol(BaseModel):
+    def __init__(self, 
+                 phi = 0.95,  
+                 phi_frac_cover = 0.95,
+                 min_points = 10,
+                ):
+        self.phi = phi
+        self.phi_frac_cover = min(phi_frac_cover, 0.9999)
+        self.min_points = min_points
+        self.use_m2 = False
+
+    def view(self, plot = False, **kwargs):
+        pass
+
+    def estimate(self, y = None, x = None, t = None, z = None, msidx = None, **kwargs):   
+        '''
+        estimate without penalizing with varying variance...
+        we can add that but maybe it's too much unjustified complexity        
+        '''
+        pass 
+
+    def posterior_predictive(self, y = None, x = None, t = None, z = None, msidx = None, is_live = False, **kwargs):
+        '''
+        x: numpy (m, p) array
+        '''            
+        if y.ndim == 2:
+            assert y.shape[1] == 1, "y must contain a single target for a RollVar model"
+            y = y[:, 0]          
+        if y.size != 0:
+            # create filter
+            k_f = np.log(1-self.phi_frac_cover)/np.log(self.phi) - 1
+            f = (1-self.phi)*np.power(self.phi, np.arange(int(k_f)+1))
+            v = predictive_rollvar(y, f)
+            scale = np.sqrt(v)
+            scale[scale == 0] = 1e8
+            # burn some observations
+            if is_live and y.size < f.size:
+                print('Data is not enough for live. Return zero weight...')
+            # m[:f.size] = 0
+            scale[:min(f.size,self.min_points)] = 1
+            return np.ones_like(y), scale
+        else:
+            return np.zeros_like(y), np.ones_like(y)
+
 
 
 

@@ -68,7 +68,9 @@ class InvVolEnsembleModel(EnsembleModel):
         for k, data in dataset.items():
             if data.n > 5:
                 keys.append(k)
-                vols.append(np.mean(np.std(data.y, axis = 0)))
+                v = np.mean(np.std(data.y, axis = 0))
+                if v == 0: v = 1e10
+                vols.append(v)
             else:
                 keys.append(k)
                 vols.append(1e10)

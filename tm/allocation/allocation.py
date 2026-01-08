@@ -27,6 +27,9 @@ class Allocation(ABC):
         '''
         pass
 
+    def set_use_m2(self, use_m2 = True):
+        self.use_m2 = use_m2
+
 
 def soft(m, v, c, b):
     '''
@@ -46,7 +49,11 @@ class Optimal(Allocation):
         self.max_w = max_w
         self.c = c
         self.seq_w = seq_w
+        self.use_m2 = True
         self.w_norm = 1
+
+    def set_use_m2(self, use_m2 = True):
+        self.use_m2 = use_m2
 
     def view(self):
         print('Weight norm: ', self.w_norm)
@@ -59,7 +66,10 @@ class Optimal(Allocation):
         if p == 1:
             m = mu.ravel()
             v = cov.ravel()
-            w = m / (v + m*m)
+            if self.use_m2:
+                w = m / (v + m*m)
+            else:
+                w = m / v
             if w.size != 0:
                 self.w_norm = np.quantile(np.abs(w), self.quantile, method = 'closest_observation') # using this method also work for state models
                 if self.w_norm == 0: self.w_norm = 1
@@ -97,7 +107,10 @@ class Optimal(Allocation):
             v = cov.ravel()
             # no costs aware alloc
             if self.c is None:
-                w = m / (v + m*m)
+                if self.use_m2:
+                    w = m / (v + m*m)
+                else:
+                    w = m / v
                 w = self.norm_w_1d(w)
                 if not live:
                     return np.atleast_2d(w.T).T   

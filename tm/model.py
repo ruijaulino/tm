@@ -31,7 +31,9 @@ class Model:
         if not self.transforms: self.transforms = Transforms()
         self.allocation = allocation
         if not self.allocation: self.allocation = Optimal()
-    
+        if hasattr(self.base_model, 'use_m2'):
+            self.allocation.set_use_m2(use_m2 = self.base_model.use_m2)
+
     def copy(self):
         return copy.deepcopy(self)
 

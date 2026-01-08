@@ -22,8 +22,12 @@ class uGaussian(BaseModel):
             y = y[:, 0]
         
         n = y.size
-        self.m = np.mean(y)
-        self.v = np.var(y)
+        if n > 10:
+            self.m = np.mean(y)
+            self.v = np.var(y)
+        else:
+            self.m = 0
+            self.v = 1e10
 
     def posterior_predictive(self, y, **kwargs):
         '''
