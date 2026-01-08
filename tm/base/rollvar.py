@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 from tm.base import BaseModel
 from tm.base import LinRegr, StateModel
 import numpy as np
+from scipy.signal import convolve
 
 def rollvar(y, f):
     ysq = y * y
@@ -20,12 +21,20 @@ def apply_filter(z, f):
     zs = np.convolve(z, f, mode='full')[:len(z)]
     return zs
 
+def apply_filter_matrix(Z, f):
+    # Ensure f is normalized to sum to 1
+    f = f / f.sum()
+    return convolve(Z, f[:, None, None], mode="full")[:Z.shape[0]]    
+
 def rollvar(y, f):
-    ysq = y * y
     return apply_filter(y*y, f)
 
 def rollmean(y, f):
     return apply_filter(y, f)
+
+def rollcov(y, f):
+    Y = np.einsum('ni,nj->nij', y, y)      # (n, d, d)    
+    return apply_filter_matrix(Y, f)    
 
 def predictive_rollvar(y, f, lag = 0):
     v = rollvar(y, f)
@@ -33,12 +42,16 @@ def predictive_rollvar(y, f, lag = 0):
     # v = np.hstack((v[0], v[:-1]))
     return v
 
+def predictive_rollcov(y, f, lag = 0):
+    c = rollcov(y, f)
+    pad = np.repeat(np.eye(y.shape[1])[None, :, :], 1+lag, axis=0)
+    c = np.vstack((pad, c[:-1-lag]))
+    return c
+
 def predictive_rollmean(y, f, lag = 0):
     m = rollmean(y, f)
     m = np.hstack((m[0]*np.ones(1+lag), m[:-1-lag]))
     return m
-
-
 
 class RollMean(BaseModel):
     def __init__(self, phi = 0.95, phi_frac_cover = 0.95, reversion = False, min_points = 10, long_only = False, lag = 0):
@@ -181,6 +194,62 @@ class RollInvVol(BaseModel):
 
 
 
+class RollCov(BaseModel):
+    def __init__(self, 
+                 base_model:BaseModel,
+                 phi = 0.95,  
+                 phi_frac_cover = 0.95,
+                 min_points = 10,
+                 lag = 0
+                ):
+        self.phi = phi
+        self.phi_frac_cover = min(phi_frac_cover, 0.9999)
+        self.min_points = min_points
+        self.base_model = base_model
+        self.lag = lag
+        try:
+            if self.base_model.min_points != self.min_points:
+                print('Warning: setting min_points in RollVar different than in base_model')
+        except:
+            pass 
+    
+    def view(self, plot = False, **kwargs):
+        self.base_model.view(plot = plot)
+
+    def estimate(self, y = None, x = None, t = None, z = None, msidx = None, **kwargs):   
+        '''
+        estimate without penalizing with varying variance...
+        we can add that but maybe it's too much unjustified complexity        
+        '''
+        self.base_model.estimate(y = y, x = x, t = t, z = z, msidx = msidx)
+
+    def posterior_predictive(self, y = None, x = None, t = None, z = None, msidx = None, is_live = False, **kwargs):
+        '''
+        x: numpy (m, p) array
+        '''            
+        if y.shape[0] != 0:
+            m, _ = self.base_model.posterior_predictive(y = y, x = x, t = t, z = z, msidx = msidx) 
+            
+            # create filter
+            k_f = np.log(1-self.phi_frac_cover)/np.log(self.phi) - 1
+            f = (1-self.phi)*np.power(self.phi, np.arange(int(k_f)+1))
+            v = predictive_rollcov(y, f, lag = self.lag)
+            # v[v == 0] = 1e8
+            # burn some observations
+            if is_live and y.size < f.size:
+                print('Data is not enough for live. Return zero weight...')
+            # m[:f.size] = 0
+            v[:min(f.size,self.min_points)] = np.eye(y.shape[1])
+            return m, v
+
+        else:
+            return np.zeros_like(y), np.repeat(np.eye(y.shape[1])[None, :, :], y.shape[0], axis=0)
+
+
+
+
+
+
 class RollVarLinRegr(RollVar):
     def __init__(self, phi = 0.95, phi_frac_cover = 0.95, intercept = True):
         super().__init__(LinRegr(intercept = intercept), phi = phi, phi_frac_cover = phi_frac_cover)
@@ -192,6 +261,17 @@ class RollVarStateModel(RollVar):
 
 if __name__ == '__main__':
 
+
+
+    y = np.random.normal(0, 1, (500,3))
+    base_model = None
+    model = RollCov(None)
+    print(model.posterior_predictive(y))
+
+
+
+
+    print(sdfsdf)
     n = 1000
     a=0.1
     b=0.5

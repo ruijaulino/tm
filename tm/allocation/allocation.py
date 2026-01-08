@@ -77,9 +77,11 @@ class Optimal(Allocation):
                 self.w_norm = 1
 
         else:
-            cov_inv = np.linalg.inv(cov)
-            m = cov_inv + np.einsum('ni,nj->nij', mu, mu) 
-            w = np.einsum('nij,ni->nj', m, mu)
+
+            M = cov + np.einsum('ni,nj->nij', mu, mu) 
+            M_inv = np.linalg.inv(M)
+            w = np.einsum('nij,ni->nj', M, mu)
+
             if w.shape[0] != 0:
                 self.w_norm = np.quantile(np.sum(np.abs(w), axis = 1), self.quantile, method = 'closest_observation') # using this method also work for state models
                 if self.w_norm == 0: self.w_norm = 1
@@ -155,9 +157,11 @@ class Optimal(Allocation):
                         return w[-1]
                         
         else:
-            cov_inv = np.linalg.inv(cov)
-            m = cov_inv + np.einsum('ni,nj->nij', mu, mu) 
-            w = np.einsum('nij,ni->nj', m, mu)
+            
+            M = cov + np.einsum('ni,nj->nij', mu, mu) 
+            M_inv = np.linalg.inv(M)
+            w = np.einsum('nij,ni->nj', M, mu)
+
             w = self.norm_w_2d(w)
             if not live:
                 return np.atleast_2d(w.T).T   
