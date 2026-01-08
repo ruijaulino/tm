@@ -53,6 +53,18 @@ def predictive_rollmean(y, f, lag = 0):
     m = np.hstack((m[0]*np.ones(1+lag), m[:-1-lag]))
     return m
 
+
+def diagonalize_covs(cov):
+    '''
+    keeps only the diagonal part of every entry of cov (nXdXd)
+    outputs (nXdXd) as well
+    '''
+    diag = np.diagonal(cov, axis1=1, axis2=2)      # (n, d)
+    out = np.zeros_like(cov)
+    idx = np.arange(cov.shape[1])
+    out[:, idx, idx] = diag    
+    return out
+
 class RollMean(BaseModel):
     def __init__(self, phi = 0.95, phi_frac_cover = 0.95, reversion = False, min_points = 10, long_only = False, lag = 0):
         self.phi = phi
@@ -207,6 +219,7 @@ class RollCov(BaseModel):
         self.min_points = min_points
         self.base_model = base_model
         self.lag = lag
+
         try:
             if self.base_model.min_points != self.min_points:
                 print('Warning: setting min_points in RollVar different than in base_model')
@@ -245,6 +258,66 @@ class RollCov(BaseModel):
         else:
             return np.zeros_like(y), np.repeat(np.eye(y.shape[1])[None, :, :], y.shape[0], axis=0)
 
+
+
+class RollInvMultiVol(BaseModel):
+    def __init__(self, 
+                 phi = 0.95,  
+                 phi_frac_cover = 0.95,
+                 min_points = 10,
+                 lag = 0,
+                 diagonalize = False,
+                 reg_corr = 1
+                ):
+        self.phi = phi
+        self.phi_frac_cover = min(phi_frac_cover, 0.9999)
+        self.min_points = min_points
+        self.lag = lag
+        self.diagonalize = diagonalize
+        self.use_m2 = False
+        self.reg_corr = reg_corr
+    
+    def view(self, plot = False, **kwargs):
+        pass
+
+    def estimate(self, y = None, x = None, t = None, z = None, msidx = None, **kwargs):   
+        '''
+        estimate without penalizing with varying variance...
+        we can add that but maybe it's too much unjustified complexity        
+        '''
+        pass
+
+    def posterior_predictive(self, y = None, x = None, t = None, z = None, msidx = None, is_live = False, **kwargs):
+        '''
+        x: numpy (m, p) array
+        '''            
+        if y.shape[0] != 0:
+            
+            # create filter
+            k_f = np.log(1-self.phi_frac_cover)/np.log(self.phi) - 1
+            f = (1-self.phi)*np.power(self.phi, np.arange(int(k_f)+1))
+            cov = predictive_rollcov(y, f, lag = self.lag)
+            # burn some observations
+            if is_live and y.size < f.size:
+                print('Data is not enough for live. Return zero weight...')
+            # m[:f.size] = 0
+            cov[:min(f.size,self.min_points)] = np.eye(y.shape[1])
+            if self.diagonalize:
+                cov = diagonalize_covs(cov)
+            # extract correlation and scales
+            std = np.sqrt(np.diagonal(cov, axis1=1, axis2=2))   # (n, d)
+            scales = np.zeros_like(cov)
+            idx = np.arange(cov.shape[1])
+            scales[:, idx, idx] = std
+            denom = std[:, :, None] * std[:, None, :]   # (n, d, d)
+            R = cov / denom
+            R *= self.reg_corr
+            R[:, idx, idx] = 1.0
+            # we should output SR -> when inverted gives S^{-1} R^{-1}
+            return np.ones_like(y), scales@R
+
+        else:
+            return np.zeros_like(y), np.repeat(np.eye(y.shape[1])[None, :, :], y.shape[0], axis=0)
 
 
 
