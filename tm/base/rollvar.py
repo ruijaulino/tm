@@ -27,25 +27,27 @@ def rollvar(y, f):
 def rollmean(y, f):
     return apply_filter(y, f)
 
-def predictive_rollvar(y, f):
+def predictive_rollvar(y, f, lag = 0):
     v = rollvar(y, f)
-    v = np.hstack((v[0], v[:-1]))
+    v = np.hstack((v[0]*np.ones(1+lag), v[:-1-lag]))
+    # v = np.hstack((v[0], v[:-1]))
     return v
 
-def predictive_rollmean(y, f):
+def predictive_rollmean(y, f, lag = 0):
     m = rollmean(y, f)
-    m = np.hstack((m[0], m[:-1]))
+    m = np.hstack((m[0]*np.ones(1+lag), m[:-1-lag]))
     return m
 
 
 
 class RollMean(BaseModel):
-    def __init__(self, phi = 0.95, phi_frac_cover = 0.95, reversion = False, min_points = 10, long_only = False):
+    def __init__(self, phi = 0.95, phi_frac_cover = 0.95, reversion = False, min_points = 10, long_only = False, lag = 0):
         self.phi = phi
         self.phi_frac_cover = min(phi_frac_cover, 0.9999)
         self.min_points = min_points
         self.reversion = reversion
         self.long_only = long_only
+        self.lag = lag
 
     def view(self, **kwargs):
         pass
@@ -62,7 +64,7 @@ class RollMean(BaseModel):
             # create filter
             k_f = np.log(1-self.phi_frac_cover)/np.log(self.phi) - 1
             f = (1-self.phi)*np.power(self.phi, np.arange(int(k_f)+1))
-            m = predictive_rollmean(y, f)
+            m = predictive_rollmean(y, f, lag = self.lag)
             if self.reversion:
                 m*=-1
             if self.long_only:
@@ -83,11 +85,13 @@ class RollVar(BaseModel):
                  phi = 0.95,  
                  phi_frac_cover = 0.95,
                  min_points = 10,
+                 lag = 0
                 ):
         self.phi = phi
         self.phi_frac_cover = min(phi_frac_cover, 0.9999)
         self.min_points = min_points
         self.base_model = base_model
+        self.lag = lag
         try:
             if self.base_model.min_points != self.min_points:
                 print('Warning: setting min_points in RollVar different than in base_model')
@@ -116,7 +120,7 @@ class RollVar(BaseModel):
             # create filter
             k_f = np.log(1-self.phi_frac_cover)/np.log(self.phi) - 1
             f = (1-self.phi)*np.power(self.phi, np.arange(int(k_f)+1))
-            v = predictive_rollvar(y, f)
+            v = predictive_rollvar(y, f, lag = self.lag)
             v[v == 0] = 1e8
             # burn some observations
             if is_live and y.size < f.size:
@@ -133,11 +137,13 @@ class RollInvVol(BaseModel):
                  phi = 0.95,  
                  phi_frac_cover = 0.95,
                  min_points = 10,
+                 lag = 0
                 ):
         self.phi = phi
         self.phi_frac_cover = min(phi_frac_cover, 0.9999)
         self.min_points = min_points
         self.use_m2 = False
+        self.lag = lag # lag to consider observations only up to self.lag days 
 
     def view(self, plot = False, **kwargs):
         pass
@@ -160,7 +166,7 @@ class RollInvVol(BaseModel):
             # create filter
             k_f = np.log(1-self.phi_frac_cover)/np.log(self.phi) - 1
             f = (1-self.phi)*np.power(self.phi, np.arange(int(k_f)+1))
-            v = predictive_rollvar(y, f)
+            v = predictive_rollvar(y, f, lag = self.lag)
             scale = np.sqrt(v)
             scale[scale == 0] = 1e8
             # burn some observations

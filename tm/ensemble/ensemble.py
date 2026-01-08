@@ -51,7 +51,28 @@ class IdleEnsembleModel(EnsembleModel):
             self.pws.update({k: self.v / s})
 
     def get(self, k:str) -> float:
-        return self.pws.get(k, 1)        
+        return self.pws.get(k, 1)      
+
+
+
+class ParametricEnsembleModel(EnsembleModel):
+    
+    def __init__(self, pws):
+        self.pws = pws
+
+    def estimate(self, dataset:Dataset, model_set:ModelSet):
+        """Subclasses must implement this method"""
+        # it should estimate a number to attribute to each key in dataset accessible with .get method
+        pass
+
+    def get(self, k:str) -> float:
+        assert k in self.pws, f"ParametricEnsembleModel does not contain key {k}"
+        return self.pws.get(k, 1)      
+
+
+
+
+
 
 class InvVolEnsembleModel(EnsembleModel):
     
