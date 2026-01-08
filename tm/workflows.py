@@ -31,7 +31,7 @@ def cvbt_path(
             modelset:Union[Model, ModelSet],
             k_folds:int = 4, 
             seq_path:bool = False, 
-            use_last_fold_on_seq_path:bool = False,
+            use_remaining_folds_on_seq_path:bool = False,
             start_fold:int = 0, 
             burn_fraction:float = 0.1, 
             min_burn_points:int = 3,
@@ -42,7 +42,7 @@ def cvbt_path(
 
     dataset.split_ts(k_folds)                  
     
-    if seq_path and not use_last_fold_on_seq_path:
+    if seq_path and not use_remaining_folds_on_seq_path:
         start_fold = max(1, start_fold)
 
     for fold_index in range(start_fold, k_folds):  
@@ -52,7 +52,7 @@ def cvbt_path(
                                                     burn_fraction = burn_fraction, 
                                                     min_burn_points = min_burn_points, 
                                                     seq_path = seq_path,
-                                                    use_last_fold_on_seq_path = use_last_fold_on_seq_path
+                                                    use_remaining_folds_on_seq_path = use_remaining_folds_on_seq_path
                                                     )
 
         # copy model pipe
@@ -74,7 +74,7 @@ def cvbt(
         n_paths: int = 5,
         k_folds:int = 4, 
         seq_path:bool = False, 
-        use_last_fold_on_seq_path:bool = False,
+        use_remaining_folds_on_seq_path:bool = False,
         start_fold:int = 0, 
         burn_fraction:float = 0.1, 
         min_burn_points:int = 3,
@@ -88,7 +88,7 @@ def cvbt(
                             modelset = modelset.copy(),
                             k_folds = k_folds, 
                             seq_path = seq_path, 
-                            use_last_fold_on_seq_path = use_last_fold_on_seq_path,
+                            use_remaining_folds_on_seq_path = use_remaining_folds_on_seq_path,
                             start_fold = start_fold, 
                             burn_fraction = burn_fraction, 
                             min_burn_points = min_burn_points,
