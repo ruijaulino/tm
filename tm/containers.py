@@ -68,12 +68,13 @@ class Data:
             burn_fraction: float = 0.1, 
             min_burn_points: int = 1, 
             seq_path: bool = False,
+            use_last_fold_on_seq_path: bool = False,
             folds_ts: list = None,
             **kwargs
             ):
         
-        if seq_path and test_fold_idx == 0:
-            raise ValueError("Cannot start at fold 0 when path is sequential")
+        if seq_path and test_fold_idx == 0 and not use_last_fold_on_seq_path:
+            raise ValueError("Cannot start at fold 0 when path is sequential and not using the last fold")
         folds_ts = self.folds_ts if folds_ts is None else folds_ts
         if folds_ts is None:            
             raise ValueError("Need to split before getting the split")
@@ -84,11 +85,16 @@ class Data:
         test_data = self.between(ts_lower, ts_upper)
 
         # create training data
-        train_data = self.before(ts = ts_lower).random_segment(burn_fraction, min_burn_points)
-        # if path is non sequential add data after the test set
         if not seq_path:
+            train_data = self.before(ts = ts_lower).random_segment(burn_fraction, min_burn_points)
             train_data_add = self.after(ts = ts_upper).random_segment(burn_fraction, min_burn_points)
             train_data.stack(train_data_add, allow_both_empty = True)
+        else:
+            if use_last_fold_on_seq_path:
+                last_fold_start, _ = folds_ts[-1]    
+                train_data = self.after(ts = last_fold_start).random_segment(burn_fraction, min_burn_points)                
+            else:
+                train_data = self.before(ts = ts_lower).random_segment(burn_fraction, min_burn_points)
 
         return train_data, test_data
         
@@ -307,10 +313,11 @@ class Dataset(dict):
             test_fold_idx: int, 
             burn_fraction: float = 0.1, 
             min_burn_points: int = 1, 
-            seq_path: bool = False
+            seq_path: bool = False,
+            use_last_fold_on_seq_path: bool = False
             ):
         
-        if seq_path and test_fold_idx == 0:
+        if seq_path and test_fold_idx == 0 and not use_last_fold_on_seq_path:
             raise ValueError("Cannot start at fold 0 when path is sequential")
         if self.folds_ts is None:
             raise ValueError("Need to split before getting the split")
@@ -324,8 +331,10 @@ class Dataset(dict):
                                                 burn_fraction = burn_fraction,
                                                 min_burn_points = min_burn_points,
                                                 seq_path = seq_path,
+                                                use_last_fold_on_seq_path = use_last_fold_on_seq_path,
                                                 folds_ts = self.folds_ts
                                                 )
+
             train_dataset.add(key, train_data)
             test_dataset.add(key, test_data)    
         
