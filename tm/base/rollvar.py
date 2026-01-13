@@ -46,6 +46,7 @@ def predictive_rollcov(y, f, lag = 0):
     c = rollcov(y, f)
     pad = np.repeat(np.eye(y.shape[1])[None, :, :], 1+lag, axis=0)
     c = np.vstack((pad, c[:-1-lag]))
+    c[c<0] = 1e-15
     return c
 
 def predictive_rollmean(y, f, lag = 0):
@@ -305,6 +306,7 @@ class RollInvMultiVol(BaseModel):
             if self.diagonalize:
                 cov = diagonalize_covs(cov)
             # extract correlation and scales
+
             std = np.sqrt(np.diagonal(cov, axis1=1, axis2=2))   # (n, d)
             scales = np.zeros_like(cov)
             idx = np.arange(cov.shape[1])
