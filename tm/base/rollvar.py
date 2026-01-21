@@ -5,36 +5,31 @@ from tm.base import LinRegr, StateModel
 import numpy as np
 from scipy.signal import convolve
 
-def rollvar(y, f):
-    ysq = y * y
+def apply_filter_vector(v, f):
     # Ensure f is normalized to sum to 1
     f = f / f.sum()
     # np.convolve flips filter internally
-    v = np.convolve(ysq, f, mode='full')[:len(ysq)]
-    return v
+    return np.convolve(v, f, mode='full')[:v.size]
 
-
-def apply_filter(z, f):
+def apply_filter_matrix(M, f):
     # Ensure f is normalized to sum to 1
     f = f / f.sum()
-    # np.convolve flips filter internally
-    zs = np.convolve(z, f, mode='full')[:len(z)]
-    return zs
+    return convolve(M, f[:, None], mode="full")[:M.shape[0]]    
 
-def apply_filter_matrix(Z, f):
+def apply_filter_tensor(T, f):
     # Ensure f is normalized to sum to 1
     f = f / f.sum()
-    return convolve(Z, f[:, None, None], mode="full")[:Z.shape[0]]    
+    return convolve(T, f[:, None, None], mode="full")[:T.shape[0]]    
 
 def rollvar(y, f):
-    return apply_filter(y*y, f)
+    return apply_filter_vector(y*y, f)
 
 def rollmean(y, f):
-    return apply_filter(y, f)
+    return apply_filter_matrix(y, f)
 
 def rollcov(y, f):
     Y = np.einsum('ni,nj->nij', y, y)      # (n, d, d)    
-    return apply_filter_matrix(Y, f)    
+    return apply_filter_tensor(Y, f)    
 
 def predictive_rollvar(y, f, lag = 0):
     v = rollvar(y, f)
@@ -50,8 +45,8 @@ def predictive_rollcov(y, f, lag = 0):
     return c
 
 def predictive_rollmean(y, f, lag = 0):
-    m = rollmean(y, f)
-    m = np.hstack((m[0]*np.ones(1+lag), m[:-1-lag]))
+    m = rollmean(y, f)    
+    m = np.vstack((np.zeros((1+lag, y.shape[1])), m[:-1-lag]))
     return m
 
 
@@ -82,9 +77,12 @@ class RollMean(BaseModel):
         pass
 
     def posterior_predictive(self, y, is_live = False, **kwargs):
-        if y.ndim == 2:
-            assert y.shape[1] == 1, "y must contain a single target for RollMean model"
-            y = y[:, 0]          
+        '''
+        works for multivariate y...
+        '''
+        #if y.ndim == 2:
+        #    assert y.shape[1] == 1, "y must contain a single target for RollMean model"
+        #    y = y[:, 0]          
 
         if y.size != 0:
             # create filter
@@ -96,7 +94,7 @@ class RollMean(BaseModel):
             if self.long_only:
                 m[m<0] = 0
             # burn some observations
-            if is_live and y.size < f.size:
+            if is_live and y.shape[0] < f.size:
                 print('Data is not enough for live. Return zero weight...')
             m[:min(f.size,self.min_points)] = 0
             return m, np.ones_like(y)        
@@ -213,13 +211,18 @@ class RollCov(BaseModel):
                  phi = 0.95,  
                  phi_frac_cover = 0.95,
                  min_points = 10,
-                 lag = 0
+                 lag = 0,
+                 diagonalize = False,
+                 reg_corr = 1
+
                 ):
         self.phi = phi
         self.phi_frac_cover = min(phi_frac_cover, 0.9999)
         self.min_points = min_points
         self.base_model = base_model
         self.lag = lag
+        self.diagonalize = diagonalize
+        self.reg_corr = reg_corr
 
         try:
             if self.base_model.min_points != self.min_points:
@@ -247,14 +250,27 @@ class RollCov(BaseModel):
             # create filter
             k_f = np.log(1-self.phi_frac_cover)/np.log(self.phi) - 1
             f = (1-self.phi)*np.power(self.phi, np.arange(int(k_f)+1))
-            v = predictive_rollcov(y, f, lag = self.lag)
+            cov = predictive_rollcov(y, f, lag = self.lag)
+            if self.diagonalize:
+                cov = diagonalize_covs(cov)
             # v[v == 0] = 1e8
             # burn some observations
             if is_live and y.size < f.size:
                 print('Data is not enough for live. Return zero weight...')
             # m[:f.size] = 0
-            v[:min(f.size,self.min_points)] = np.eye(y.shape[1])
-            return m, v
+            cov[:min(f.size,self.min_points)] = np.eye(y.shape[1])
+
+            std = np.sqrt(np.diagonal(cov, axis1=1, axis2=2))   # (n, d)
+            scales = np.zeros_like(cov)
+            idx = np.arange(cov.shape[1])
+            scales[:, idx, idx] = std
+            denom = std[:, :, None] * std[:, None, :]   # (n, d, d)
+            R = cov / denom
+            R *= self.reg_corr
+            R[:, idx, idx] = 1.0
+
+
+            return m, scales@R@scales
 
         else:
             return np.zeros_like(y), np.repeat(np.eye(y.shape[1])[None, :, :], y.shape[0], axis=0)
