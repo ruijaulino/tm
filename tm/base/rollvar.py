@@ -140,7 +140,7 @@ class RollVar(BaseModel):
             assert y.shape[1] == 1, "y must contain a single target for a RollVar model"
             y = y[:, 0]          
         if y.size != 0:
-            m, _ = self.base_model.posterior_predictive(y = y, x = x, t = t, z = z, msidx = msidx)                
+            m, _ = self.base_model.posterior_predictive(y = y[:,None], x = x, t = t, z = z, msidx = msidx)                
             # create filter
             k_f = np.log(1-self.phi_frac_cover)/np.log(self.phi) - 1
             f = (1-self.phi)*np.power(self.phi, np.arange(int(k_f)+1))
