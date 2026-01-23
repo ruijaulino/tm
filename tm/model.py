@@ -139,7 +139,10 @@ class Model:
             cov = cov.reshape((cov.size, 1, 1))        
         w = self.allocation.get_weight(mu, cov, cost_scale = self.transforms.cost_scale(), live = True, prev_w = prev_w)        
         return np.atleast_1d(w)
-
+        
+    def save(self, filepath):
+        with open(filepath, 'wb') as f:
+            pickle.dump(self, f, pickle.HIGHEST_PROTOCOL)
 
 class ModelSet(dict):
     def __init__(self, master_model:Model = None, ensemble_model:EnsembleModel = None, individual_alloc_norm:bool = False):

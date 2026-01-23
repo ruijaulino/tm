@@ -261,12 +261,14 @@ class RollCov(BaseModel):
             cov[:min(f.size,self.min_points)] = np.eye(y.shape[1])
 
             std = np.sqrt(np.diagonal(cov, axis1=1, axis2=2))   # (n, d)
+            std[std < 1e-10] = 1e-10
             scales = np.zeros_like(cov)
             idx = np.arange(cov.shape[1])
             scales[:, idx, idx] = std
             denom = std[:, :, None] * std[:, None, :]   # (n, d, d)
             R = cov / denom
             R *= self.reg_corr
+            # make sure these entries are one
             R[:, idx, idx] = 1.0
 
 

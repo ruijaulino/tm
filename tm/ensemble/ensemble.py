@@ -149,7 +149,9 @@ class InvVolStratFilterEnsembleModel(EnsembleModel):
             if data.n > 5:
                 keys.append(k)
                 f.append(self._compute_filter_stat(data.s))
-                w.append(1 / np.mean(np.std(data.y, axis = 0)))
+                v = np.mean(np.std(data.y, axis = 0))
+                if v == 0: v = 1e10
+                w.append(1 / v)
             else:
                 keys.append(k)
                 f.append(-1)
