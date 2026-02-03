@@ -1,12 +1,15 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from tm.base import BaseModel
+from scipy.stats.mstats import winsorize
+
 
 class LinRegr(BaseModel):
-    def __init__(self, intercept = True):
+    def __init__(self, intercept = True, winsorize_quantile = 0):
         self.intercept = intercept
         self.w = None
         self.v = 1
+        self.winsorize_quantile = winsorize_quantile
 
     def view(self, plot = False, **kwargs):
         print('** Linear Regression **')
@@ -30,7 +33,8 @@ class LinRegr(BaseModel):
         assert y.size == x.shape[0], "y and x must have the same number of observations"
         n = y.size
         if self.intercept:
-            x = np.hstack((np.ones((n, 1)), x))
+            x = np.hstack((np.ones((n, 1)), x))        
+        x = winsorize(x, limits=[self.winsorize_quantile, self.winsorize_quantile], axis = 0)
         Q, R = np.linalg.qr(x)
         self.w = np.linalg.solve(R, Q.T @ y)
         self.v = np.var(y - x @ self.w)

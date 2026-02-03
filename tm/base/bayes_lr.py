@@ -181,7 +181,7 @@ class BayesLinRegr(BaseModel):
                  intercept = True, 
                  n_iter = 5000, 
                  tol = 1e-6,
-                 ard = False,  
+                 ard = True,  
                  post_w_norm = False               
                 ):
         self.w_quantile = w_quantile

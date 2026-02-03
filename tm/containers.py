@@ -142,6 +142,7 @@ class Data:
         
         assert not isinstance(df.columns, pd.MultiIndex), "df is a DataFrame with MultiIndex. Correct the inputs..."
 
+        df = df.copy(deep = True)
 
         df.index = pd.to_datetime(df.index)
         ts = datetime_to_int(df.index)
