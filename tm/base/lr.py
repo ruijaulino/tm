@@ -35,6 +35,7 @@ class LinRegr(BaseModel):
         if self.intercept:
             x = np.hstack((np.ones((n, 1)), x))        
         x = winsorize(x, limits=[self.winsorize_quantile, self.winsorize_quantile], axis = 0)
+        x = np.array(x)
         Q, R = np.linalg.qr(x)
         self.w = np.linalg.solve(R, Q.T @ y)
         self.v = np.var(y - x @ self.w)
