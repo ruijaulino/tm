@@ -62,12 +62,12 @@ def diagonalize_covs(cov):
     return out
 
 class RollMean(BaseModel):
-    def __init__(self, phi = 0.95, phi_frac_cover = 0.95, reversion = False, min_points = 10, long_only = False, lag = 0):
+    def __init__(self, phi = 0.95, phi_frac_cover = 0.95, reversion = False, min_points = 10, side = None, lag = 0):
         self.phi = phi
         self.phi_frac_cover = min(phi_frac_cover, 0.9999)
         self.min_points = min_points
         self.reversion = reversion
-        self.long_only = long_only
+        self.side = side
         self.lag = lag
 
     def view(self, **kwargs):
@@ -91,8 +91,8 @@ class RollMean(BaseModel):
             m = predictive_rollmean(y, f, lag = self.lag)
             if self.reversion:
                 m*=-1
-            if self.long_only:
-                m[m<0] = 0
+            if self.side is not None:
+                m[m*self.side < 0] = 0
             # burn some observations
             if is_live and y.shape[0] < f.size:
                 print('Data is not enough for live. Return zero weight...')

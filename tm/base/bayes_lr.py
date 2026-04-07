@@ -383,7 +383,7 @@ class BayesianLinearRegression:
         self.x_scale_ = None
         self.y_mean_ = None
 
-    def view(self):
+    def view(self, **kwargs):
         print("** BayesianLinearRegression **")
         print("w:", self.w)
         print("beta:", self.b)
