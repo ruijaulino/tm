@@ -6,4 +6,5 @@ from .gaussian import uGaussian, ConditionalGaussian
 from .state_model import StateModel
 from .rollvar import RollVar, RollMean, RollVarLinRegr, RollVarStateModel, RollInvVol, RollInvMultiVol, RollCov
 from .bayes_lr import BayesLinRegr, BayesianLinearRegression
+from .as_univariate import AsUnivariate
 from .hmm import HMM, HMMEmissions, uHMMBaseEmission, uBaseLaplaceEmission, uBaseGaussianEmission, uBaseGaussianMixtureEmission, uBaseLREmission, uHMMEmissions, uGaussianEmissions, uLaplaceEmissions, uGaussianMixtureEmissions, FastTFHMM
