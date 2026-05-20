@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+from scipy.stats import norm
 import matplotlib.pyplot as plt
 from typing import List, Union, Dict
 from tm.containers import Data, Dataset
@@ -72,7 +73,70 @@ def bootstrap_sharpe(s, n_boot = 1000):
     return boot_samples
 
 
-def valid_strategy(s, n_boot, sr_mult, pct_fee = 0, view = True):
+def block_bootstrap_sharpe(s, n_boot=1000, block_size=10):
+    """
+    Vectorized moving block bootstrap Sharpe samples for a 1D return series.
+
+    Parameters
+    ----------
+    s : array-like, shape (n,)
+        1D array of returns.
+    n_boot : int
+        Number of bootstrap samples.
+    block_size : int
+        Length of each block.
+    ddof : int
+        Degrees of freedom for std.
+
+    Returns
+    -------
+    boot_samples : np.ndarray, shape (n_boot,)
+        Bootstrap Sharpe samples.
+    """
+    s = np.asarray(s)
+    if s.ndim != 1:
+        raise ValueError("s must be 1D")
+
+    n = s.size
+    if block_size < 1 or block_size > n:
+        raise ValueError("block_size must satisfy 1 <= block_size <= len(s)")
+
+    n_blocks = int(np.ceil(n / block_size))
+    max_start = n - block_size
+
+    # shape: (n_blocks, n_boot)
+    starts = np.random.randint(0, max_start + 1, size=(n_blocks, n_boot))
+
+    # shape: (block_size,)
+    offsets = np.arange(block_size)
+
+    # shape: (n_blocks, n_boot, block_size)
+    idx = starts[..., None] + offsets
+    
+    # flatten first and last axes -> total sampled length >= n
+    # shape after reshape: (n_blocks*block_size, n_boot)
+    idx = idx.transpose(0, 2, 1).reshape(n_blocks * block_size, n_boot)
+
+    # truncate to length n
+    idx = idx[:n, :]
+
+    # sampled returns, shape: (n, n_boot)
+    s_boot = s[idx]
+
+    mu = np.mean(s_boot, axis=0)
+    sigma = np.std(s_boot, axis=0)
+
+    boot_samples = mu / sigma
+    
+    return boot_samples
+
+
+
+
+
+
+
+def valid_strategy(s, n_boot, sr_mult, alpha = 0.05, alpha_n = 1000, pct_fee = 0, block_size = 20, view = True):
     '''
     check if the paths represent a strategy with a positive
     sharpe ratio via bootstrap from the worst path
@@ -80,29 +144,46 @@ def valid_strategy(s, n_boot, sr_mult, pct_fee = 0, view = True):
     '''
     paths_sr = sr_mult*np.mean(s, axis = 0) / np.std(s, axis = 0)
     idx_lowest_sr = np.argmin(paths_sr)
-    b_samples = bootstrap_sharpe(s[:,idx_lowest_sr], n_boot = n_boot)
+    b_samples = block_bootstrap_sharpe(s[:,idx_lowest_sr], n_boot = n_boot, block_size = block_size)
     b_samples *= sr_mult
     valid = False
-    if np.sum(b_samples < 0) == 0:
-        valid = True
+    #if np.sum(b_samples < 0) == 0:
+    #    valid = True
+    
+    mean_b = np.mean(b_samples)
+    scale_b = np.std(b_samples)
+    
+    # bonferroni
+    valid = norm.cdf(0, loc=mean_b, scale=scale_b) < alpha/alpha_n
+    
     if valid:
-        txt='** ACCEPT STRATEGY **' 
+        txt=f'** ACCEPT STRATEGY from normal approximation of bootstrap Sharpe [alpha = {alpha/alpha_n}]**' 
         if view: print(txt)     
     else:
-        txt='** REJECT STRATEGY **' 
+        txt=f'** REJECT STRATEGY from normal approximation of bootstrap Sharpe [alpha = {alpha/alpha_n}]**' 
         if view: print(txt)     
-    if s.shape[1]!=1:
-        txt='Distribution of paths SHARPE' 
-        if view:
-            plt.title(txt)
-            plt.hist(paths_sr,density=True)
-            plt.grid(True)
-            plt.show()
+    
+    #if s.shape[1]!=1:
+    #    txt='Distribution of paths SHARPE' 
+    #    if view:
+    #        plt.title(txt)
+    #        plt.hist(paths_sr,density=True)
+    #        plt.grid(True)
+    #        plt.show()
     if view:
         plt.title('(Worst path) SR bootstrap distribution')
-        plt.hist(b_samples,density=True)
+
+        x_min, x_max = 0.5*np.min(b_samples), np.max(b_samples)*1.5
+        x_pdf = np.linspace(x_min, x_max, 250)
+        pdf = np.exp(-0.5*np.power((x_pdf-mean_b)/scale_b,2))/np.sqrt(2*np.pi*scale_b*scale_b)
+        plt.hist(b_samples,density=True, label = 'Histogram')
+        plt.plot(x_pdf, pdf, label = 'Gaussian Fit')
+        plt.axvline(0)
         plt.grid(True)
+        plt.legend()
         plt.show() 
+        
+        
     return valid
 
 
@@ -132,7 +213,7 @@ class Paths(list):
             self.append(dataset)
 
     # add post process methods
-    def post_process(self, pct_fee = 0., seq_fees = False, sr_mult = np.sqrt(250), n_boot = 1000, key = None, start_date = '', end_date = ''):
+    def post_process(self, pct_fee = 0., seq_fees = False, sr_mult = np.sqrt(250), n_boot = 1000, block_size = 20, alpha = 0.05, alpha_n = 1000, key = None, start_date = '', end_date = '', simple_view = False):
 
         if len(self) == 0:
             print('No paths to process!')
@@ -169,11 +250,13 @@ class Paths(list):
         # post processing        
         equity_curve(s, ts, color = 'g', pct_fee = pct_fee)    
         
-        returns_distribution(s,pct_fee=pct_fee,bins=50)
-        
-        visualize_weights(w,ts)
+        if not simple_view:
 
-        valid_strategy(s,n_boot,sr_mult,pct_fee=pct_fee)
+            returns_distribution(s,pct_fee=pct_fee,bins=50)
+            
+            visualize_weights(w,ts)
+
+        valid_strategy(s,n_boot,sr_mult,alpha = alpha, alpha_n = alpha_n,pct_fee=pct_fee, block_size = block_size)
 
         performance_summary(s,sr_mult,pct_fee=pct_fee)
 
@@ -181,7 +264,7 @@ class Paths(list):
         out.columns = [f'path_{i+1}' for i in range(len(out.columns))]
         return out
 
-    def portfolio_post_process(self, pct_fee = 0., seq_fees = False, sr_mult = np.sqrt(250), n_boot = 1000, view_weights = True, use_pw = True, multiplier = 1, start_date = '', end_date = ''):
+    def portfolio_post_process(self, pct_fee = 0., seq_fees = False, sr_mult = np.sqrt(250), n_boot = 1000, block_size = 20, alpha = 0.05, alpha_n = 1000, view_weights = True, use_pw = True, multiplier = 1, start_date = '', end_date = ''):
 
 
 
@@ -295,7 +378,7 @@ class Paths(list):
         plt.grid(True)
         plt.show()  
 
-        valid_strategy(s, n_boot, sr_mult, pct_fee = pct_fee)
+        valid_strategy(s, n_boot, sr_mult, alpha = alpha, alpha_n = alpha_n, pct_fee = pct_fee, block_size = block_size)
 
         performance_summary(s, sr_mult, pct_fee = pct_fee)
 

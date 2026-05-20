@@ -1,4 +1,5 @@
 from tm.base import BaseModel
+import copy
 import numpy as np
 
 class AsUnivariate(BaseModel):
@@ -21,7 +22,7 @@ class AsUnivariate(BaseModel):
     def view(self, plot = False, **kwargs):
         for i, m in enumerate(self.base_models):
             print('Model for variable: ', i)
-            self.m.view(plot = plot)
+            m.view(plot = plot)
 
     def estimate(self, y, x = None, t = None, z = None, msidx = None, **kwargs):   
         '''
@@ -61,6 +62,11 @@ class AsUnivariate(BaseModel):
             new_m = np.zeros_like(m)            
             new_m[rows, d] = m[rows, d]
             m = new_m
+            if self.side == 'long':
+                m[m<0] = 0
+            if self.side == 'short':
+                m[m>0] = 0
+                    
         # build cov
         I = np.eye(v.shape[1]) 
         cov = v[:, :, None] * I  

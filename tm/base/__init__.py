@@ -4,6 +4,7 @@ from .laplace_regr import LaplaceRegr
 from .mlr import MLR
 from .gaussian import uGaussian, ConditionalGaussian
 from .state_model import StateModel
+from .state_gaussian import StateGaussian
 from .rollvar import RollVar, RollMean, RollVarLinRegr, RollVarStateModel, RollInvVol, RollInvMultiVol, RollCov
 from .bayes_lr import BayesLinRegr, BayesianLinearRegression
 from .as_univariate import AsUnivariate
