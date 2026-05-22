@@ -2,6 +2,9 @@ import numpy as np
 import copy
 from tm.base import BaseModel
 
+
+
+
 class StateModel(BaseModel):
     def __init__(self, min_points = 10, zero_states = []):
         self.min_points = min_points
@@ -58,6 +61,32 @@ class StateModel(BaseModel):
             m[idx] = self.states_distribution.get(state, {'m':0, 'v':1}).get('m')
             v[idx] = self.states_distribution.get(state, {'m':0, 'v':1}).get('v')        
         return m, v
+
+
+class toStateModel(BaseModel):
+    def __init__(self, min_points = 10, th = 0):
+        self.th = th
+        self.state_model = StateModel(min_points = min_points)
+
+    def view(self, plot = False, **kwargs):
+        self.state_model.view(plot = plot)
+
+    def estimate(self, y, x, **kwargs):
+        if x.ndim == 2: x = x[:,0]     
+        # create z
+        z = np.zeros(x.size)
+        z[x>self.th] = 1        
+        self.state_model.estimate(y, z)
+
+    def posterior_predictive(self, x, **kwargs):
+        if x.ndim == 2: x = x[:,0]
+        # create z
+        z = np.zeros(x.size)
+        z[x>self.th] = 1        
+        return self.state_model.posterior_predictive(z)
+
+
+
 
 
 if __name__ == '__main__':

@@ -2,6 +2,61 @@ from tm.base import BaseModel
 import copy
 import numpy as np
 
+
+
+class AsSingle(BaseModel):
+    '''
+    Build a individual base_model for each feature
+    '''
+    def __init__(self, base_model:BaseModel, model_weights = None):
+        self.base_model = base_model
+        self.base_models = []
+        self.model_weights = model_weights
+
+    def view(self, plot = False, **kwargs):
+        for i, m in enumerate(self.base_models):
+            print('Model for feature: ', i)
+            m.view(plot = plot)        
+
+    def estimate(self, y, x = None, t = None, z = None, msidx = None, **kwargs):   
+        '''
+        estimate without penalizing with varying variance...
+        we can add that but maybe it's too much unjustified complexity        
+        '''
+        assert x.ndim is not None, "x must be defined"
+        assert x.ndim == 2, "x must be a matrix!"
+        p = x.shape[1]
+        for i in range(p):
+            tmp = copy.deepcopy(self.base_model)
+            tmp.estimate(y = y, x = x[:,[i]], t = t, z = z, msidx = msidx)
+            self.base_models.append(tmp)
+        if self.model_weights is None: self.model_weights = np.ones(p)
+        assert len(self.model_weights) == p, "model weights do not have the same dimension as number of features!"
+        self.model_weights = np.array(self.model_weights)
+        self.model_weights /= np.sum(np.abs(self.model_weights))
+
+    def posterior_predictive(self, y, x = None, t = None, z = None, msidx = None, is_live = False, **kwargs):
+        m, cov = np.zeros_like(y), np.zeros_like(y)  
+        for i in range(x.shape[1]):
+            m_, cov_ = self.base_models[i].posterior_predictive(
+                                                        y = y, 
+                                                        x = x[:,i], 
+                                                        t = t, 
+                                                        z = z, 
+                                                        msidx = msidx
+                                                        )
+            if y.ndim == 2 and m_.ndim == 1:
+                m += self.model_weights[i]*m_[:,None]
+            else:
+                m += self.model_weights[i]*m_
+
+            if y.ndim == 2 and cov_.ndim == 1:
+                cov += self.model_weights[i]*cov_[:,None]
+            else:
+                cov += self.model_weights[i]*cov_
+        return m, cov
+
+
 class AsUnivariate(BaseModel):
     '''
     Build individual base_model for each target

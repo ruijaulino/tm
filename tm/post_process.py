@@ -264,7 +264,7 @@ class Paths(list):
         out.columns = [f'path_{i+1}' for i in range(len(out.columns))]
         return out
 
-    def portfolio_post_process(self, pct_fee = 0., seq_fees = False, sr_mult = np.sqrt(250), n_boot = 1000, block_size = 20, alpha = 0.05, alpha_n = 1000, view_weights = True, use_pw = True, multiplier = 1, start_date = '', end_date = ''):
+    def portfolio_post_process(self, pct_fee = 0., seq_fees = False, sr_mult = np.sqrt(250), n_boot = 1000, block_size = 20, alpha = 0.05, alpha_n = 1000, view_weights = True, use_pw = True, multiplier = 1, start_date = '', end_date = '', resample_to = 'B'):
 
 
 
@@ -304,9 +304,16 @@ class Paths(list):
                     pw = np.ones_like(pw) 
 
                 s = pd.DataFrame(calculate_fees(s[:,None], w[:,:,None], seq_fees, pct_fee.get(key, 0)), columns = [key], index=ts)
+                if resample_to is not None:
+                    s = s.resample(resample_to).last().fillna(0)
                 path_s.append(s)
-                path_pw.append(pd.DataFrame(pw[:,None], columns = [key], index = ts))
+                pw = pd.DataFrame(pw[:,None], columns = [key], index = ts)
+                if resample_to is not None:
+                    pw = pw.resample(resample_to).last().fillna(0)
+                path_pw.append(pw)
                 w = pd.DataFrame(w, columns = data.w_cols, index = ts)
+                if resample_to is not None:
+                    w = w.resample(resample_to).last().fillna(0)
                 path_w_abs_sum.append(pd.DataFrame(w.abs().sum(axis=1), columns=[key]))
                 path_w_sum.append(pd.DataFrame(w.abs().sum(axis=1),columns = [key]))
 
