@@ -41,7 +41,13 @@ def predictive_rollcov(y, f, lag = 0):
     c = rollcov(y, f)
     pad = np.repeat(np.eye(y.shape[1])[None, :, :], 1+lag, axis=0)
     c = np.vstack((pad, c[:-1-lag]))
-    c[c<0] = 1e-15
+    # replace small diagonals (numerical zeros) with ones
+    idx = np.arange(c.shape[1])
+    tmp = c[:, idx, idx]
+    # replace zeros with 1
+    tmp[tmp < 1e-10] = 1
+    c[:, idx, idx] = tmp
+    # c[c<0] = 1e-15 # not necessary...
     return c
 
 def predictive_rollmean(y, f, lag = 0):
@@ -286,7 +292,7 @@ class RollInvMultiVol(BaseModel):
                  min_points = 10,
                  lag = 0,
                  diagonalize = False,
-                 reg_corr = 1
+                 corr_mult = 1
                 ):
         self.phi = phi
         self.phi_frac_cover = min(phi_frac_cover, 0.9999)
@@ -294,7 +300,7 @@ class RollInvMultiVol(BaseModel):
         self.lag = lag
         self.diagonalize = diagonalize
         self.use_m2 = False
-        self.reg_corr = reg_corr
+        self.corr_mult = corr_mult
     
     def view(self, plot = False, **kwargs):
         pass
@@ -320,6 +326,15 @@ class RollInvMultiVol(BaseModel):
             if is_live and y.size < f.size:
                 print('Data is not enough for live. Return zero weight...')
             # m[:f.size] = 0
+
+
+            # print(np.diagonal(cov, axis1=1, axis2=2))
+            # view of all diagonal entries: shape (n, p)
+            # tmp = cov[:, np.arange(cov.shape[1]), np.arange(cov.shape[1])]
+            # replace zeros with 1
+            #tmp[tmp == 0] = 1
+            #print(np.diagonal(cov, axis1=1, axis2=2))
+            #print(sdfsdf)
             cov[:min(f.size,self.min_points)] = np.eye(y.shape[1])
             if self.diagonalize:
                 cov = diagonalize_covs(cov)
@@ -330,8 +345,10 @@ class RollInvMultiVol(BaseModel):
             idx = np.arange(cov.shape[1])
             scales[:, idx, idx] = std
             denom = std[:, :, None] * std[:, None, :]   # (n, d, d)
+            # denom[denom == 0] = 1e8
+            # cov[cov == 0] = 1e8
             R = cov / denom
-            R *= self.reg_corr
+            R *= self.corr_mult
             R[:, idx, idx] = 1.0
             # we should output SR -> when inverted gives S^{-1} R^{-1}
             return np.ones_like(y), scales@R
