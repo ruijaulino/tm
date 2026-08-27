@@ -20,6 +20,7 @@ def int_to_datetime(ts):
     return pd.to_datetime(ts * 10**9)
 
 def contiguous_prefix_slices(columns: np.ndarray) -> Dict[str, slice]:
+    columns = [c.split(SEPARATOR_VARIABLES)[0] for c in columns] # added this
     prefixes = [''.join(filter(str.isalpha, name)) for name in columns]
     result = {}
     i = 0

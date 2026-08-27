@@ -136,7 +136,19 @@ class RollVar(BaseModel):
         estimate without penalizing with varying variance...
         we can add that but maybe it's too much unjustified complexity        
         '''
-        self.base_model.estimate(y = y, x = x, t = t, z = z, msidx = msidx)
+
+        # compute roll variance for y
+        if y.ndim == 2:
+            assert y.shape[1] == 1, "y must contain a single target for a RollVar model"
+            y = y[:, 0]  
+
+        k_f = np.log(1-self.phi_frac_cover)/np.log(self.phi) - 1
+        f = (1-self.phi)*np.power(self.phi, np.arange(int(k_f)+1))
+        var = rollvar(y, f) 
+        if var.size < f.size:
+            var = np.ones_like(var)
+
+        self.base_model.estimate(y = y, x = x, t = t, z = z, msidx = msidx, var = var)
 
     def posterior_predictive(self, y = None, x = None, t = None, z = None, msidx = None, is_live = False, **kwargs):
         '''
@@ -365,8 +377,8 @@ class RollVarLinRegr(RollVar):
         super().__init__(LinRegr(intercept = intercept), phi = phi, phi_frac_cover = phi_frac_cover)
 
 class RollVarStateModel(RollVar):
-    def __init__(self, phi = 0.95, phi_frac_cover = 0.95, min_points = 10, zero_states = []):
-        super().__init__(StateModel(min_points = min_points, zero_states = zero_states), phi = phi, phi_frac_cover = phi_frac_cover)
+    def __init__(self, phi = 0.95, phi_frac_cover = 0.95, min_points = 10, zero_states = [], use_var = False):
+        super().__init__(StateModel(min_points = min_points, zero_states = zero_states, use_var = use_var), phi = phi, phi_frac_cover = phi_frac_cover)
 
 
 if __name__ == '__main__':

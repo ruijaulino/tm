@@ -6,10 +6,11 @@ from tm.base import BaseModel
 
 
 class StateModel(BaseModel):
-    def __init__(self, min_points = 10, zero_states = []):
+    def __init__(self, min_points = 10, zero_states = [], use_var = False):
         self.min_points = min_points
         self.states_distribution = {}
         self.zero_states = zero_states
+        self.use_var = use_var
         self.default_mean = 0
         self.default_var = 1
         self.w_norm = 1
@@ -23,7 +24,7 @@ class StateModel(BaseModel):
             print(v)
             print()
 
-    def estimate(self, y, z, **kwargs):
+    def estimate(self, y, z, var = None, **kwargs):
         
         if y.ndim == 2:
             assert y.shape[1] == 1, "y must contain a single target (for now)"
@@ -32,7 +33,14 @@ class StateModel(BaseModel):
         assert z.ndim == 1, "z must be a vector"
         assert y.shape[0] == z.size, "y and z must have the same number of observations"
 
+
+
         n = y.size        
+        if var is None:
+            var = np.ones(n)
+        if not self.use_var:
+            var = np.ones(n)
+        var[var<1e-6] = 1e-6
         states = np.unique(z)
         for state in states:                        
             if state in self.zero_states:
@@ -40,7 +48,7 @@ class StateModel(BaseModel):
             else:
                 idx = z == state
                 if idx.size > self.min_points:
-                    m = np.mean(y[idx])
+                    m = np.sum(y[idx]/var[idx]) / max(np.sum(1/var[idx]), 1e-8)
                     v = np.var(y[idx])
                     self.states_distribution.update({state: {'m':m, 'v':v}})
 

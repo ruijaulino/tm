@@ -36,7 +36,7 @@ class AsSingle(BaseModel):
         self.model_weights /= np.sum(np.abs(self.model_weights))
 
     def posterior_predictive(self, y, x = None, t = None, z = None, msidx = None, is_live = False, **kwargs):
-        m, cov = np.zeros_like(y), np.zeros_like(y)  
+        m, cov = np.zeros_like(y, dtype = np.float64), np.zeros_like(y, dtype = np.float64)  
         for i in range(x.shape[1]):
             m_, cov_ = self.base_models[i].posterior_predictive(
                                                         y = y, 
@@ -96,7 +96,7 @@ class AsUnivariate(BaseModel):
         x: numpy (m, p) array
         '''       
         if y.ndim == 1: y = y[:, None]
-        m, v = np.zeros_like(y), np.zeros_like(y)
+        m, v = np.zeros_like(y, dtype = np.float64), np.zeros_like(y, dtype = np.float64)
         for i in range(y.shape[1]):
             m[:, i], v[:,i] = self.base_models[i].posterior_predictive(
                                                         y = y[:,[i]], 

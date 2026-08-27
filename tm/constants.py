@@ -1,9 +1,10 @@
 # -----------------------
 # Constants & Configurations
 # -----------------------
-
+# recomend to separate by SEPARATOR_VARIABLES
+SEPARATOR_VARIABLES = '_'
 Y = 'y' # Target variable (returns)
-X = 'x' # Continuous feature
+X = 'x' # Continuous feature 
 Z = 'z' # Discrete state
 T = 't' # Non-tradeable target
 H = 'h' # hedge securities

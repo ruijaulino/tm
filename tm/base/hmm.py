@@ -387,7 +387,7 @@ class uBaseGaussianEmission(uHMMBaseEmission):
             # non informative
             self.prev_an = an
             self.prev_bn = bn
-            self.gibbs_var[iteration] = 1 / np.random.gamma(an, 1 / bn)  
+            self.gibbs_var[iteration] = np.maximum(1 / np.random.gamma(an, 1 / bn), 1e-12) # need to clip this..
 
     def gibbs_burn_and_mean(self):
         self.gibbs_mean = self.gibbs_mean[-self.n_gibbs:]

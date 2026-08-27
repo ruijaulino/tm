@@ -44,19 +44,23 @@ def soft(m, v, c, b):
 
 
 class Optimal(Allocation):
-    def __init__(self, quantile = 0.95, max_w = 1, c = None, seq_w = False):
+    def __init__(self, quantile = 0.95, max_w = 1, c = None, seq_w = False, demean = False):
         self.quantile = quantile
         self.max_w = max_w
         self.c = c
         self.seq_w = seq_w
+        self.demean = demean
         self.use_m2 = True
         self.w_norm = 1
+        self.w_mean = 0
+
 
     def set_use_m2(self, use_m2 = True):
         self.use_m2 = use_m2
 
     def view(self):
         print('Weight norm: ', self.w_norm)
+        print('Weight mean: ', self.w_mean)
 
     def estimate(self, mu, cov, **kwargs):                
         # make sure inputs make sense
@@ -73,8 +77,10 @@ class Optimal(Allocation):
             if w.size != 0:
                 self.w_norm = np.quantile(np.abs(w), self.quantile, method = 'closest_observation') # using this method also work for state models
                 if self.w_norm == 0: self.w_norm = 1
+                self.w_mean = np.mean(w)
             else:
                 self.w_norm = 1
+                self.w_mean = 0
 
         else:
 
@@ -88,17 +94,24 @@ class Optimal(Allocation):
             if w.shape[0] != 0:
                 self.w_norm = np.quantile(np.sum(np.abs(w), axis = 1), self.quantile, method = 'closest_observation') # using this method also work for state models
                 if self.w_norm == 0: self.w_norm = 1
+                self.w_mean = np.mean(w, axis = 0)
             else:
                 self.w_norm = 1
+                self.w_mean = np.zeros(w.shape[1])
             #raise Exception('Optimal for p>1 not yet implemented')
     
     def norm_w_1d(self, w):
+        # demean
+        if self.demean:
+            w -= self.w_mean
         w /= self.w_norm
         idx = np.abs(w) > self.max_w
         w[idx] = np.sign(w[idx])*self.max_w
         return w
 
     def norm_w_2d(self, w):
+        if self.demean:
+            w -= self.w_mean
         w /= self.w_norm
         idx = np.sum(np.abs(w), axis = 1) > self.max_w
         w[idx] /= np.sum(np.abs(w[idx]), axis = 1)[:,None] #np.sign(w[idx])*self.max_w
