@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from tm.base import BaseModel
-from tm.base import LinRegr, StateModel
+from tm.base import LinRegr, StateModel, EnsembleStateModel
 import numpy as np
 from scipy.signal import convolve
 
@@ -379,6 +379,13 @@ class RollVarLinRegr(RollVar):
 class RollVarStateModel(RollVar):
     def __init__(self, phi = 0.95, phi_frac_cover = 0.95, min_points = 10, zero_states = [], use_var = False):
         super().__init__(StateModel(min_points = min_points, zero_states = zero_states, use_var = use_var), phi = phi, phi_frac_cover = phi_frac_cover)
+
+
+class RollVarEnsembleStateModel(RollVar):
+    def __init__(self, phi = 0.95, phi_frac_cover = 0.95, min_points = 10, model_weights = None, use_var = False, base_models = None):
+        super().__init__(EnsembleStateModel(model_weights = model_weights, min_points = min_points, use_var = use_var, base_models = base_models), phi = phi, phi_frac_cover = phi_frac_cover)
+
+
 
 
 if __name__ == '__main__':

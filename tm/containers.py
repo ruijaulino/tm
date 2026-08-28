@@ -36,7 +36,7 @@ class Data:
     def __init__(self, 
                  ts, y, s=None, x=None, z=None, t=None,
                  msidx=None, pw=None, w=None,
-                 y_cols=np.array([]), x_cols=None, t_cols=None, w_cols=None):
+                 y_cols=np.array([]), x_cols=None, t_cols=None, w_cols=None, z_cols=None):
         
         self.ts = ts
         self.y = y
@@ -52,7 +52,8 @@ class Data:
         self.x_cols = x_cols
         self.t_cols = t_cols
         self.w_cols = w_cols if w_cols is not None else np.array([f"{W}_{e}" for e in y_cols])
-        
+        self.z_cols = z_cols
+
         self.n, self.p = self.y.shape
         self.msidx_start = None
         self.msidx_start_lookup = None
@@ -126,7 +127,7 @@ class Data:
 
         add_field(self.y, self.y_cols)
         add_field(self.x, self.x_cols)
-        add_field(self.z, [Z] if self.z is not None else [])
+        add_field(self.z, self.z_cols)
         add_field(self.t, self.t_cols)
         add_field(self.msidx, [MSIDX])
         add_field(self.s, [S])
@@ -168,12 +169,13 @@ class Data:
             t = df.values[:, prefix_slices[T]]
             t_cols = columns[prefix_slices[T]]
         if Z in prefix_slices:
-            z = df.values[:, prefix_slices[Z]][:, 0]
+            z = df.values[:, prefix_slices[Z]]# [:, 0]
+            z_cols = columns[prefix_slices[Z]]
         if MSIDX in prefix_slices:
             msidx = df.values[:, prefix_slices[MSIDX].start]
 
         return cls(ts=ts, y=y, x=x, z=z, t=t, msidx=msidx,
-                   y_cols=y_cols, x_cols=x_cols, t_cols=t_cols)
+                   y_cols=y_cols, x_cols=x_cols, t_cols=t_cols, z_cols=z_cols)
 
     def __getitem__(self, idx):
         if isinstance(idx, tuple):
@@ -186,7 +188,7 @@ class Data:
             s=self.s[idx], pw=self.pw[idx], w=self.w[idx],
             msidx=self.msidx[idx],
             y_cols=self.y_cols, x_cols=self.x_cols,
-            t_cols=self.t_cols, w_cols=self.w_cols)
+            t_cols=self.t_cols, w_cols=self.w_cols, z_cols = self.z_cols)
 
     def copy(self):
         return copy.deepcopy(self)
@@ -237,7 +239,7 @@ class Data:
         if self.t is not None:
             self.t = np.vstack((self.t, data.t))
         if self.z is not None:
-            self.z = np.hstack((self.z, data.z))
+            self.z = np.vstack((self.z, data.z))# np.hstack((self.z, data.z))
 
         self.s = np.hstack((self.s, data.s))
         self.pw = np.hstack((self.pw, data.pw))
@@ -251,7 +253,7 @@ class Data:
         return self
 
     def as_dict(self, is_live:bool = False):
-        return {'y': self.y, 'x': self.x, 't': self.t, 'z': self.z, 'msidx': self.msidx, 'is_live': is_live, 'y_cols': self.y_cols, 'x_cols': self.x_cols, 't_cols': self.t_cols}
+        return {'y': self.y, 'x': self.x, 't': self.t, 'z': self.z, 'msidx': self.msidx, 'is_live': is_live, 'y_cols': self.y_cols, 'x_cols': self.x_cols, 't_cols': self.t_cols, 'z_cols':self.z_cols}
 
     def input_at(self, idx: int = None):
         if idx is None:

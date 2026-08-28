@@ -145,9 +145,10 @@ class Model:
             pickle.dump(self, f, pickle.HIGHEST_PROTOCOL)
 
 class ModelSet(dict):
-    def __init__(self, master_model:Model = None, ensemble_model:EnsembleModel = None, individual_alloc_norm:bool = False):
+    def __init__(self, master_model:Model = None, ensemble_model:EnsembleModel = None, master_models_map:List = None, individual_alloc_norm:bool = False):
         self.master_model = master_model        
         self.ensemble_model = ensemble_model
+        self.master_models_map = master_models_map # [{'master_model':Model, 'apply_to':[]}] - needs to exhaust list in data...
         self.individual_alloc_norm = individual_alloc_norm
         # after a model is run this variable stores the dataset 
         # that was used to estimate the model!    
@@ -182,6 +183,7 @@ class ModelSet(dict):
         
         assert isinstance(dataset, Dataset), "ModelSet can only be used with a Dataset object"
 
+        
         # estimate ensemble_model, may do nestec cv here
         if self.ensemble_model:
             # create a model set without the ensemble model
@@ -190,7 +192,51 @@ class ModelSet(dict):
             self.ensemble_model.estimate(dataset, tmp_modelset)
         
         # estimate models
-        if self.master_model:
+        if self.master_models_map:
+
+            # check if data keys are covered
+            covered_keys = []
+            for e, _ in self.master_models_map: covered_keys += e.get('apply_to', [])
+            covered_keys = list(set(covered_keys))
+            for k, _ in data.items(): assert k in covered_keys, "not all elements in dataset assigned to a master_model"
+
+            for elem in self.master_models_map:
+                apply_to = elem.get('apply_to')
+                master_model = elem.get('master_model')
+
+                data = None
+                for k, data_ in dataset.items():
+                    if k in apply_to:
+                        # copy the master model
+                        k_model = master_model.copy()
+                        k_model.estimate_transforms(data_)                
+                        # transforms
+                        transformed_data_ = k_model.transform(data_)                                
+                        if not data: 
+                            data = transformed_data_
+                        else:
+                            data.stack(transformed_data_, allow_both_empty = True)
+                        # add to key
+                        self[k] = k_model
+
+                if data.empty: raise Exception('data is empty. should not happen')
+                # estimate master model
+                master_model.estimate_base_model(data)            
+                # estimate allocation
+                if not self.individual_alloc_norm:
+                    master_model.estimate_allocation(data)    
+
+                # set base models and estimate allocation
+                for k, data in dataset.items():
+                    if k in apply_to:
+                        self[k].set_base_model(master_model.base_model)
+                        # set the global one (even if not estimated yet...)
+                        self[k].set_allocation(master_model.allocation)
+                        # estimate allocation for each one
+                        if self.individual_alloc_norm:
+                            self[k].estimate_allocation(self[k].transform(data))
+
+        elif self.master_model:
             # if a master model is present, apply transforms, stack the data, and estimate it
             data = None
             for k, data_ in dataset.items():
