@@ -139,6 +139,41 @@ class Data:
     def __repr__(self):
         return self.to_df().__repr__()
 
+    def _get_columns(self, columns):
+        def extract_prefix(name):
+            return ''.join(filter(str.isalpha, name))
+        columns = sorted(columns, key=extract_prefix)
+
+        x = x_cols = t = t_cols = z = z_cols = None
+
+        prefix_slices = contiguous_prefix_slices(columns)
+        
+        assert Y in prefix_slices, f"{Y} need to be in selected columns"
+        y_cols = prefix_slices[Y]
+        idx = np.where(np.isin(self.y_cols, columns[y_cols]))[0]        
+        y = self.y[:, idx]
+        y_cols = columns[y_cols]
+
+        if X in prefix_slices:
+            x_cols = prefix_slices[X]
+            idx = np.where(np.isin(self.x_cols, columns[x_cols]))[0]        
+            x = self.x[:, idx]
+            x_cols = columns[x_cols]
+
+        if T in prefix_slices:
+            t_cols = prefix_slices[T]
+            idx = np.where(np.isin(self.t_cols, columns[t_cols]))[0]        
+            t = self.t[:, idx]
+            t_cols = columns[t_cols]
+        if Z in prefix_slices:
+            z_cols = prefix_slices[Z]
+            idx = np.where(np.isin(self.z_cols, columns[z_cols]))[0]        
+            z = self.z[:, idx]
+            z_cols = columns[z_cols]
+        cls = type(self)
+        return cls(ts=self.ts, y=y, x=x, z=z, t=t, msidx=self.msidx,
+                   y_cols=y_cols, x_cols=x_cols, t_cols=t_cols, z_cols=z_cols)               
+
     @classmethod
     def from_df(cls, df: pd.DataFrame):
         
@@ -160,7 +195,7 @@ class Data:
         y = df.values[:, prefix_slices[Y]]
         y_cols = columns[prefix_slices[Y]]
 
-        x = x_cols = t = t_cols = z = msidx = None
+        x = x_cols = t = t_cols = z = z_cols = msidx = None
 
         if X in prefix_slices:
             x = df.values[:, prefix_slices[X]]

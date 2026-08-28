@@ -418,7 +418,7 @@ class BayesianLinearRegression:
         L = np.linalg.cholesky(K + jit * I)
         return L, jit
 
-    def _unscale_params(self, w_s: np.ndarray, S_s: np.ndarray | None):
+    def _unscale_params(self, w_s: np.ndarray, S_s):#: np.ndarray | None):
         """
         Convert weights/covariance from standardized feature space back to original units.
         w_s includes intercept if intercept=True.
@@ -448,7 +448,7 @@ class BayesianLinearRegression:
                 # Can't bake y_mean_ without an intercept; handle in prediction.
         return w, S
 
-    def _prepare_data(self, y: np.ndarray, X: np.ndarray, v: np.ndarray | None):
+    def _prepare_data(self, y: np.ndarray, X: np.ndarray, v):#: np.ndarray | None):
         # y -> (n,)
         y = np.asarray(y, dtype=np.float64)
         if y.ndim == 2:

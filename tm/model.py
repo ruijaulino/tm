@@ -148,7 +148,7 @@ class ModelSet(dict):
     def __init__(self, master_model:Model = None, ensemble_model:EnsembleModel = None, master_models_map:List = None, individual_alloc_norm:bool = False):
         self.master_model = master_model        
         self.ensemble_model = ensemble_model
-        self.master_models_map = master_models_map # [{'master_model':Model, 'apply_to':[]}] - needs to exhaust list in data...
+        self.master_models_map = master_models_map # [{'master_model':Model, 'apply_to':[], 'columns':['y1', 'x1','x2','z1']}] - needs to exhaust list in data...
         self.individual_alloc_norm = individual_alloc_norm
         # after a model is run this variable stores the dataset 
         # that was used to estimate the model!    
@@ -194,11 +194,17 @@ class ModelSet(dict):
         # estimate models
         if self.master_models_map:
 
+            # CONTINUE!
+            # filter columns that go into the model!
+            # SOLVED IN CONTAINER! _get_columns() -> Data
+            # if several models apply to the same dataset (because they may be trained with a larger dataset)
+            #     we need to mix predictive distribution somehow
+
             # check if data keys are covered
             covered_keys = []
-            for e, _ in self.master_models_map: covered_keys += e.get('apply_to', [])
+            for e in self.master_models_map: covered_keys += e.get('apply_to', [])
             covered_keys = list(set(covered_keys))
-            for k, _ in data.items(): assert k in covered_keys, "not all elements in dataset assigned to a master_model"
+            for k, _ in dataset.items(): assert k in covered_keys, "not all elements in dataset assigned to a master_model"
 
             for elem in self.master_models_map:
                 apply_to = elem.get('apply_to')
