@@ -156,7 +156,7 @@ class Model:
         with open(filepath, 'wb') as f:
             pickle.dump(self, f, pickle.HIGHEST_PROTOCOL)
 
-
+# changed...
 # support several models applied to a dataset with appropriate mixing
 class ModelList(list):
     def __init__(self):
