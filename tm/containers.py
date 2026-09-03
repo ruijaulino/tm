@@ -60,7 +60,22 @@ class Data:
         self.folds_ts = None
         self._process_msidx()
 
-    
+    @property
+    def columns(self):
+        # get columns in data
+        c = []
+        if self.y is not None:
+            c.extend(self.y_cols)
+        if self.x is not None:
+            c.extend(self.x_cols)
+        if self.z is not None:
+            c.extend(self.z_cols)
+        if self.t is not None:
+            c.extend(self.t_cols)
+        if self.msidx is not None:
+            c.extend([MSIDX])
+        return c
+
     def split_ts(self, k_folds, **kwargs):
         self.folds_ts = split_ts(self.ts, k_folds = k_folds)
 

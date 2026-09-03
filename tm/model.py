@@ -33,6 +33,7 @@ class Model:
         if not self.allocation: self.allocation = Optimal()
         if hasattr(self.base_model, 'use_m2'):
             self.allocation.set_use_m2(use_m2 = self.base_model.use_m2)
+        self.needed_columns = None
 
     def copy(self):
         return copy.deepcopy(self)
@@ -78,6 +79,10 @@ class Model:
         self.allocation.estimate(mu, cov)  
 
     def estimate(self, data:Data):        
+        
+        # store data columns to check and filter on evaluation and live
+        self.needed_columns = data.columns
+
         # estimate transforms
         self.estimate_transforms(data)
         # apply to training data
@@ -85,6 +90,7 @@ class Model:
         # the arguments passed are like model.estimate(y, x, z, t, msidx) 
         self.estimate_base_model(transformed_data)
         self.estimate_allocation(transformed_data)
+
 
     def post_estimate(self, data:Data):
         # adjust parameters after master is estimated!
@@ -99,8 +105,11 @@ class Model:
         # apply transforms on whole data (it creates a copy if transformations are applied)
         # this prevents too much copies when iterating over the arrays
         
-        if not data.empty:
-            transformed_data = self.transform(data)
+        assert all(e in self.needed_columns for e in data.columns), "data for evaluate does not contain the needed columns"
+        data_f = data._get_columns(self.needed_columns) # filter because it may come with more columns in some special cases
+
+        if not data_f.empty:
+            transformed_data = self.transform(data_f)
 
             # compute the posterior predictive on data
             # this will generate arrays mu and cov that correspond to each point in data.y
@@ -121,14 +130,17 @@ class Model:
         # similar computations as in evaluate
         # note that data must be provided in a defined way for live evaluation
 
+        assert all(e in self.needed_columns for e in data.columns), "data for evaluate does not contain the needed columns"
+        data_f = data._get_columns(self.needed_columns) # filter because it may come with more columns in some special cases
+
         # apply transforms
-        transformed_data = self.transforms.transform(data)
+        transformed_data = self.transforms.transform(data_f)
         transformed_data.y[-1] = data.y[-1] # restore value        
         use_t = transformed_data.t is not None
         # check data format for live execution
         assert (transformed_data.y[-1] == Y_LIVE_VALUE).all(), f"In a live setting, the last observation of y must have been generated artificially with {Y_LIVE_VALUE}"    
         if use_t:
-            transformed_data.t[-1] = data.t[-1] # restore value        
+            transformed_data.t[-1] = data_f.t[-1] # restore value        
             assert (t[-1] == T_LIVE_VALUE).all(), f"In a live setting, the last observation of t must have been generated artificially with {T_LIVE_VALUE}"    
         # it does not matter that we are making more computations than needed here because it
         # is a fast operation done only once when execution live
@@ -144,6 +156,33 @@ class Model:
         with open(filepath, 'wb') as f:
             pickle.dump(self, f, pickle.HIGHEST_PROTOCOL)
 
+
+# support several models applied to a dataset with appropriate mixing
+class ModelList(list):
+    def __init__(self):
+        pass
+
+    def view(self, plot = False, **kwargs):
+        pass
+
+    def add(self, model:Model):
+        pass
+
+    def estimate(self, data:Data):
+        pass
+
+    def evaluate(self, data:Data):
+        pass
+
+    def live(self, data:Data, prev_w = None, **kwargs):
+        pass
+
+    def save(self, filepath):
+        with open(filepath, 'wb') as f:
+            pickle.dump(self, f, pickle.HIGHEST_PROTOCOL)
+
+
+
 class ModelSet(dict):
     def __init__(self, master_model:Model = None, ensemble_model:EnsembleModel = None, master_models_map:List = None, individual_alloc_norm:bool = False):
         self.master_model = master_model        
@@ -153,7 +192,6 @@ class ModelSet(dict):
         # after a model is run this variable stores the dataset 
         # that was used to estimate the model!    
         self.estimation_dataset = None
-
 
     def copy(self):
         return copy.deepcopy(self)
@@ -173,7 +211,8 @@ class ModelSet(dict):
 
 
     def add(self, key:str, model:Model = None):
-        assert self.master_model is None, "setting a model on a key a master model is defined"
+        assert self.master_model is None, "setting a model on a key when master model is defined"
+        assert self.master_models_map is None, "setting a model on a key when master models map is defined"
         if key not in self:
             self[key] = model
         else:
@@ -194,9 +233,6 @@ class ModelSet(dict):
         # estimate models
         if self.master_models_map:
 
-            # CONTINUE!
-            # filter columns that go into the model!
-            # SOLVED IN CONTAINER! _get_columns() -> Data
             # if several models apply to the same dataset (because they may be trained with a larger dataset)
             #     we need to mix predictive distribution somehow
 
@@ -209,10 +245,17 @@ class ModelSet(dict):
             for elem in self.master_models_map:
                 apply_to = elem.get('apply_to')
                 master_model = elem.get('master_model')
+                columns = elem.get('columns')
 
                 data = None
                 for k, data_ in dataset.items():
                     if k in apply_to:
+
+                        if columns:
+                            # check if data_ contain all needed columns
+                            assert all(e in data_.columns for e in columns), "data does not contain the needed columns"
+                            data_ = data_._get_columns(columns)
+
                         # copy the master model
                         k_model = master_model.copy()
                         k_model.estimate_transforms(data_)                
@@ -226,6 +269,10 @@ class ModelSet(dict):
                         self[k] = k_model
 
                 if data.empty: raise Exception('data is empty. should not happen')
+                
+                # store data columns to check and filter on evaluation and live
+                master_model.needed_columns = data.columns
+                
                 # estimate master model
                 master_model.estimate_base_model(data)            
                 # estimate allocation
@@ -259,6 +306,8 @@ class ModelSet(dict):
                 self[k] = k_model
 
             if data.empty: raise Exception('data is empty. should not happen')
+            # store data columns to check and filter on evaluation and live
+            self.master_model.needed_columns = data.columns
             # estimate master model
             self.master_model.estimate_base_model(data)            
             # estimate allocation
@@ -267,6 +316,7 @@ class ModelSet(dict):
 
             # set base models and estimate allocation
             for k, data in dataset.items():
+                self[k].needed_columns = self.master_model.needed_columns
                 self[k].set_base_model(self.master_model.base_model)
                 # set the global one (even if not estimated yet...)
                 self[k].set_allocation(self.master_model.allocation)
