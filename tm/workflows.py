@@ -9,7 +9,7 @@ import copy
 import tqdm
 import time
 from tm.containers import Data, Dataset
-from tm.model import Model, ModelSet
+#from tm.model import Model, ModelSet
 from tm.base import BaseModel
 from tm.transforms.abstract import Transform, Transforms
 from tm.post_process import Paths
@@ -17,7 +17,7 @@ from tm.constants import *
 # Dict of ModelPipeStack
 # Objective here is to handle for several data in a dataset where
 # each one has a ModelPipeStack associated
-
+from typing import TYPE_CHECKING
 
 def load_model(filepath):
     with open(filepath, 'rb') as f:
@@ -27,8 +27,8 @@ def load_model(filepath):
 
 # changes dataset in place
 def cvbt_path(
-            dataset:Union[Data, Dataset], 
-            modelset:Union[Model, ModelSet],
+            dataset:Union["Data", "Dataset"], 
+            modelset:Union["Model", "ModelSet"],
             k_folds:int = 4, 
             seq_path:bool = False, 
             use_remaining_folds_on_seq_path:bool = False,
@@ -69,8 +69,8 @@ def cvbt_path(
     return dataset    
 
 def cvbt(
-        dataset:Union[Data, Dataset], 
-        modelset:Union[Model,ModelSet],
+        dataset:Union["Data", "Dataset"], 
+        modelset:Union["Model","ModelSet"],
         n_paths: int = 5,
         k_folds:int = 4, 
         seq_path:bool = False, 

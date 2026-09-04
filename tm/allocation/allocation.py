@@ -51,61 +51,32 @@ class Optimal(Allocation):
         self.use_M = True
         
         self.w_mean = None
-
+        self.quantiles = None
+        self.k = 1
 
     def set_use_M(self, use_M = True):
         self.use_M = use_M
 
     def view(self):
-        print('Weight norm: ', self.w_norm)
+        print('k: ', self.k)
         print('Weight mean: ', self.w_mean)
 
     def estimate(self, mu, cov, **kwargs):                
         # make sure inputs make sense
         # w = self.get_weight(mu, cov, live=False)
         
+        # calculate quantiles to clip weights later
+        w = self.get_weight(mu, cov, live=False)
+        self.quantiles = np.quantile(np.abs(w), self.quantile, axis = 0, method = 'closest_observation')
+        # clip weights
+        w = np.clip(w, -self.quantiles, self.quantiles)
         if self.demean:
-            w = self.get_weight(mu, cov, live=False)
             self.w_mean = np.mean(w, axis = 0)
         else:
             self.w_mean = np.zeros(mu.shape[1])
-
-        pass
-
-        # if p == 1:
-        #     m = mu.ravel()
-        #     v = cov.ravel()
-        #     if self.use_M:
-        #         w = m / (v + m*m)
-        #     else:
-        #         w = m / v
-        #     if w.size != 0:
-        #         self.w_norm = np.quantile(np.abs(w), self.quantile, method = 'closest_observation') # using this method also work for state models
-        #         if self.w_norm == 0: self.w_norm = 1
-        #         self.w_mean = np.mean(w)
-        #     else:
-        #         self.w_norm = 1
-        #         self.w_mean = 0
-
-        # else:
-
-        #     if self.use_M:
-        #         M = cov + np.einsum('ni,nj->nij', mu, mu) 
-        #         M_inv = np.linalg.inv(M)
-        #     else:
-        #         M_inv = np.linalg.inv(cov)
-        #     w = np.einsum('nij,ni->nj', M_inv, mu)
-
-        #     if w.shape[0] != 0:
-        #         self.w_norm = np.quantile(np.sum(np.abs(w), axis = 1), self.quantile, method = 'closest_observation') # using this method also work for state models
-        #         if self.w_norm == 0: self.w_norm = 1
-        #         self.w_mean = np.mean(w, axis = 0)
-        #     else:
-        #         self.w_norm = 1
-        #         self.w_mean = np.zeros(w.shape[1])
-        #     #raise Exception('Optimal for p>1 not yet implemented')
+        self.k = np.quantile(np.sum(np.abs(w), axis = 1), self.quantile, method = 'closest_observation') # using this method also work for state models
+        if self.k == 0: self.k = 1
     
-
     def norm_w_2d(self, w):
         if self.demean:
             w -= self.w_mean
@@ -113,9 +84,6 @@ class Optimal(Allocation):
         idx = np.sum(np.abs(w), axis = 1) > self.max_w
         w[idx] /= np.sum(np.abs(w[idx]), axis = 1)[:,None] #np.sign(w[idx])*self.max_w
         return w
-
-    def clip_w(self, w):
-        pass
         
     def get_weight(self, mu, cov, live=False, **kwargs):
         assert mu.ndim == 2, "mu must be a matrix"
@@ -130,9 +98,15 @@ class Optimal(Allocation):
             w = mu / np.diagonal(M, axis1=1, axis2=2)
         else:
             w = np.linalg.solve(M, mu[..., None])[..., 0]
+            
+        if self.quantiles:
+            # clip weights
+            w = np.clip(w, -self.quantiles, self.quantiles)            
 
         if self.w_mean:
             w -= self.w_mean
+
+        #w /= self.k
 
         if not live:
             return w   
@@ -141,8 +115,10 @@ class Optimal(Allocation):
 
 if __name__ == '__main__':
     np.random.seed(0)
-    mu = np.random.normal(0, 1, (5, 1))
+    mu = np.random.normal(0, 1, (5, 2))
     cov = np.ones((5,1,1))
+    cov = np.zeros((5,2,2))
+    cov[:,np.arange(cov.shape[1]), np.arange(cov.shape[1])] = 1
     
     opt = Optimal()
     out = opt.get_weight(mu, cov)

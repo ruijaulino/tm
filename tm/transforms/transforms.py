@@ -8,8 +8,8 @@ class ScaleTransform(Transform):
     
     def __init__(self, demean = False):
         self.demean = demean
-        self.scale = 1
-        self.mean = 0
+        self.scale = None
+        self.mean = None
 
     def view(self):
         print('** Scale Transform **')
@@ -27,7 +27,10 @@ class ScaleTransform(Transform):
             if self.demean:
                 self.mean = np.mean(arr, axis = 0)
             else:
-                self.mean = self.mean*np.ones_like(self.scale)
+                self.mean = 0*np.ones_like(self.scale)
+        else:
+            self.mean = np.zeros(arr.shape[1])
+            self.scale = np.ones(arr.shape[1])
 
     def transform(self, arr:np.ndarray, **kwargs):
         """Subclasses must implement this method"""
@@ -45,6 +48,9 @@ class ScaleTransform(Transform):
     
     def scale_back_moments(self, mu, cov):
         """Subclasses must implement this method"""
+        if not self.mean or not self.scale:
+            self.mean = np.zeros(mu.shape[1])
+            self.scale = np.ones(mu.shape[1])            
         mu = mu * self.scale + self.mean
         cov = cov * self.scale[:, None] * self.scale[None, :]
         return mu, cov

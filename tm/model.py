@@ -13,15 +13,18 @@ from tm.base import BaseModel
 from tm.allocation import Allocation, Optimal
 from tm.transforms.abstract import Transforms
 from tm.containers import Data, Dataset
+# from tm.workflows import cvbt_path
 from tm.constants import *
-
+from tm.workflows import cvbt_path
+    
 # there is a circular import
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from tm.ensemble import EnsembleModel
-
 # Model class
 # a model is a set of operations: transform, probabilistic modelling and allocation strategy
+
+
 
 
 
@@ -34,9 +37,17 @@ class Model:
         if not self.transforms: self.transforms = Transforms()
         self.allocation = allocation
         if not self.allocation: self.allocation = Optimal()
-        if hasattr(self.base_model, 'use_m2'):
-            self.allocation.set_use_m2(use_m2 = self.base_model.use_m2)
+        if hasattr(self.base_model, 'use_M'):
+            self.allocation.set_use_M(use_M = self.base_model.use_M)
         self.needed_columns = None
+
+    @property
+    def k(self):
+        return self.allocation.k
+
+    def set_k(self, k):
+        self.allocation.k = k
+    
 
     def copy(self):
         return copy.deepcopy(self)
@@ -87,7 +98,6 @@ class Model:
         
         # store data columns to check and filter on evaluation and live
         self.needed_columns = data.columns
-
         # estimate transforms
         self.estimate_transforms(data)
         # apply to training data
@@ -127,7 +137,9 @@ class Model:
         
         return data
 
-    def live(self, data:Data, prev_w = None, **kwargs):
+
+    # this should be removed...
+    def live(self, data:Data, **kwargs):
         # live is implemented on it's own although it performs
         # similar computations as in evaluate
         # note that data must be provided in a defined way for live evaluation
@@ -161,15 +173,46 @@ class Model:
             pickle.dump(self, f, pickle.HIGHEST_PROTOCOL)
 
 
+
+def inner_cv_models(dataset:Dataset, modelset:ModelSet, k_folds:int = 4, seq_path:bool = False, burn_fraction:float = 0.1, min_burn_points:int = 3):
+    # maybe copies not necessary
+    dataset_ = cvbt_path(
+                dataset = dataset.copy(), 
+                modelset = modelset.copy(),
+                k_folds = k_folds, 
+                seq_path = seq_path, 
+                start_fold = 0, 
+                burn_fraction = burn_fraction, 
+                min_burn_points = min_burn_points
+                )
+    keys = []
+    w = []
+    for k, data in dataset_.items():
+        if data.n > 5:
+            keys.append(k)
+            ws = np.mean(data.s) / np.var(data.s)
+            ws = max(0, ws)
+            w.append(ws)
+        else:
+            w.append(0)
+    w = np.array(w)
+    #d = np.sum(w)
+    #if d!= 0: w/=d
+    return dict(zip(keys, w))    
+
+
+# change the name later...
 class ModelSet(dict):
-    def __init__(self, master_model:Model = None, ensemble_model:EnsembleModel = None, master_models_map:List = None, individual_alloc_norm:bool = False):
-        self.master_model = master_model        
+    def __init__(self, model:Model = None, ensemble_model:EnsembleModel = None, models_map:List = None, individual_alloc_norm:bool = False):
+        self.model = model        
         self.ensemble_model = ensemble_model
-        self.master_models_map = master_models_map # [{'master_model':Model, 'apply_to':[], 'columns':['y1', 'x1','x2','z1']}] - needs to exhaust list in data...
+        self.models_map = models_map # [{'master_model':Model, 'apply_to':[], 'columns':['y1', 'x1','x2','z1']}] - needs to exhaust list in data...
         self.individual_alloc_norm = individual_alloc_norm
         # after a model is run this variable stores the dataset 
         # that was used to estimate the model!    
         self.estimation_dataset = None
+        self.inner_cv = True
+        self.ws = None
 
     def copy(self):
         return copy.deepcopy(self)
@@ -177,6 +220,10 @@ class ModelSet(dict):
     def view(self, plot = False, **kwargs):
         print()
         print("******* ModelSet *******")
+        print()
+        print('Model weights')
+        for k, v in self.ws.items():
+            print(k, v)
         print()
         if self.ensemble_model:
             self.ensemble_model.view(plot = plot)
@@ -189,8 +236,8 @@ class ModelSet(dict):
 
 
     def add(self, key:str, model:Model = None):
-        assert self.master_model is None, "setting a model on a key when master model is defined"
-        assert self.master_models_map is None, "setting a model on a key when master models map is defined"
+        assert self.model is None, "setting a model on a key when master model is defined"
+        assert self.models_map is None, "setting a model on a key when master models map is defined"
         if key not in self:
             self[key] = model
         else:
@@ -202,14 +249,15 @@ class ModelSet(dict):
 
         
         # estimate ensemble_model, may do nestec cv here
-        if self.ensemble_model:
+        self.ws = {}
+        if self.inner_cv:
             # create a model set without the ensemble model
             tmp_modelset = self.copy()
-            tmp_modelset.ensemble_model = None # set to None
-            self.ensemble_model.estimate(dataset, tmp_modelset)
-        
+            tmp_modelset.inner_cv = False # set to None
+            self.ws = inner_cv_models(dataset, tmp_modelset)
+            
         # estimate models
-        if self.master_models_map:
+        if self.models_map:
 
             # if several models apply to the same dataset (because they may be trained with a larger dataset)
             #     we need to mix predictive distribution somehow
@@ -267,12 +315,12 @@ class ModelSet(dict):
                         if self.individual_alloc_norm:
                             self[k].estimate_allocation(self[k].transform(data))
 
-        elif self.master_model:
+        elif self.model:
             # if a master model is present, apply transforms, stack the data, and estimate it
             data = None
             for k, data_ in dataset.items():
                 # copy the master model
-                k_model = self.master_model.copy()
+                k_model = self.model.copy()
                 k_model.estimate_transforms(data_)                
                 # transforms
                 transformed_data_ = k_model.transform(data_)                                
@@ -285,19 +333,19 @@ class ModelSet(dict):
 
             if data.empty: raise Exception('data is empty. should not happen')
             # store data columns to check and filter on evaluation and live
-            self.master_model.needed_columns = data.columns
+            self.model.needed_columns = data.columns
             # estimate master model
-            self.master_model.estimate_base_model(data)            
+            self.model.estimate_base_model(data)            
             # estimate allocation
             if not self.individual_alloc_norm:
-                self.master_model.estimate_allocation(data)    
+                self.model.estimate_allocation(data)    
 
             # set base models and estimate allocation
             for k, data in dataset.items():
-                self[k].needed_columns = self.master_model.needed_columns
-                self[k].set_base_model(self.master_model.base_model)
+                self[k].needed_columns = self.model.needed_columns
+                self[k].set_base_model(self.model.base_model)
                 # set the global one (even if not estimated yet...)
-                self[k].set_allocation(self.master_model.allocation)
+                self[k].set_allocation(self.model.allocation)
                 # estimate allocation for each one
                 if self.individual_alloc_norm:
                     self[k].estimate_allocation(self[k].transform(data))
@@ -305,8 +353,15 @@ class ModelSet(dict):
         else:
             for k, data in dataset.items():
                 assert k in self, "dataset contains a key that is not defined in ModelSet. Exit.."
-                self[k].estimate(data)        
+                self[k].estimate(data)   
 
+        #
+        # compute largest k among models
+        master_k = 0
+        for _, m in self.items():
+            master_k = max(master_k, m.k)
+        for k, m in self.items():
+            m.set_k(master_k)
 
         # when we train a final model we can store the dataset that was used to estimate the
         # model. If future checks are needed we can just run inference again with it!
@@ -319,9 +374,9 @@ class ModelSet(dict):
             assert k in self, "dataset contains a key that is not defined in ModelSet. Exit.."                        
             self[k].evaluate(data)   
         # set portfolio weight on dataset                
-        if self.ensemble_model:
-            for k, data in dataset.items():
-                data.pw[:] *= self.ensemble_model.get(k)        
+        #if self.ensemble_model:
+        for k, data in dataset.items():
+            data.pw[:] *= self.ws.get(k, 0)        
         return dataset
 
     def live(self, dataset:Dataset):
@@ -349,20 +404,65 @@ class ModelSet(dict):
 
 
 
+def test():
+    import tm
 
 
+    n = 1000
+    x = np.random.normal(0, 0.01, n)
+    a = 0
+    b = 0.2
+    y = a+b*x+np.random.normal(0,0.01,n)
+    df1 = pd.DataFrame()
+    df1['x'] = x
+    df1['y'] = y
+    df1.index = pd.date_range('2000-01-01', freq = 'D', periods = n)
+
+    n = 1000
+    x = np.random.normal(0, 0.03, n)
+    a = 0
+    b = 0.2
+    y = a+b*x+np.random.normal(0,0.03,n)
+    df2 = pd.DataFrame()
+    df2['y'] = y
+    df2['x'] = x
+    df2.index = pd.date_range('2002-01-01', freq = 'D', periods = n)
 
 
+    dataset = tm.Dataset()
+    dataset.add('strat1', df1)
+    dataset.add('strat2', df2)
+
+    model_set = ModelSet()
+
+    base_model = tm.base.LinRegr()
+    alloc = tm.allocation.Optimal()
+    model1 = Model(base_model = base_model, allocation = alloc)   
+    model_set.add('strat1', model1)     
+
+
+    base_model = tm.base.LinRegr()
+    alloc = tm.allocation.Optimal()
+    model2 = Model(base_model = base_model, allocation = alloc)   
+    model_set.add('strat2', model2)    
+
+
+    model_set.estimate(dataset) 
+    model_set.view()
+    #out = model_set.evaluate(dataset) 
+    #print(out)
 if __name__ == '__main__':
+
+
+    test()
+    exit(0)
 
     # generate some data
     n = 1000
-    x = np.random.normal(0, 1, n)
+    x = np.random.normal(0, 0.0028, n)
     a = 0
     b = 0.2
-    y = a+b*x+np.random.normal(0,0.1,n)
-    
-
+    y = a+b*x+np.random.normal(0,0.0028,n)
 
     df1 = pd.DataFrame()
     df1['x'] = x
@@ -378,7 +478,7 @@ if __name__ == '__main__':
 
     import tm
     base_model = tm.base.LinRegr()
-    alloc = tm.allocation.Optimal()
+    alloc = tm.allocation.Optimal(quantile = 0.95)
     transforms = tm.transforms.Transforms(
                             y_transform = tm.transforms.ScaleTransform(),
                             x_transform = tm.transforms.ScaleTransform()
