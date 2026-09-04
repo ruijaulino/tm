@@ -23,6 +23,9 @@ if TYPE_CHECKING:
 # Model class
 # a model is a set of operations: transform, probabilistic modelling and allocation strategy
 
+
+
+
 class Model:
 
     def __init__(self, base_model:BaseModel = None, transforms:Transforms = None, allocation:Allocation = None):
@@ -47,16 +50,15 @@ class Model:
     def set_allocation(self, allocation:Allocation):
         self.allocation = copy.deepcopy(allocation)
 
-    def view(self, plot = False, transforms_only = False, **kwargs):
-        if transforms_only:
-                self.transforms.view()
-        else:
-            print("* Model *")
-            self.base_model.view(plot = plot)
-            print()
-            self.transforms.view()
-            print()
-            self.allocation.view()
+    def view(self, plot = False, **kwargs):
+        print()
+        print()
+        print("* Model *")
+        self.base_model.view(plot = plot)
+        print()
+        self.transforms.view()
+        print() 
+        self.allocation.view()
         print()
         print()
 
@@ -70,12 +72,15 @@ class Model:
         self.base_model.estimate(**data.as_dict())
         
     def estimate_allocation(self, data:Data):
-        # get predictive distribution on training data
+        # get predictive distribution on training data to get a measure of weight variation
         mu, cov = self.base_model.posterior_predictive(**data.as_dict())
+        # transform back into appropriate scale
         if mu.ndim == 1:
             mu = mu.reshape((mu.size, 1))
         if cov.ndim == 1:
             cov = cov.reshape((cov.size, 1, 1))
+        # put back in the original scale
+        mu, cov = self.transforms.scale_back_moments(mu, cov)
         self.allocation.estimate(mu, cov)  
 
     def estimate(self, data:Data):        
@@ -90,11 +95,6 @@ class Model:
         # the arguments passed are like model.estimate(y, x, z, t, msidx) 
         self.estimate_base_model(transformed_data)
         self.estimate_allocation(transformed_data)
-
-
-    def post_estimate(self, data:Data):
-        # adjust parameters after master is estimated!
-        pass
 
     def evaluate(self, data:Data):
         """Evaluate the model using the test data and return performance metrics."""
@@ -113,12 +113,14 @@ class Model:
 
             # compute the posterior predictive on data
             # this will generate arrays mu and cov that correspond to each point in data.y
-            mu, cov = self.base_model.posterior_predictive(**transformed_data.as_dict())        
+            mu, cov = self.base_model.posterior_predictive(**transformed_data.as_dict())      
             if mu.ndim == 1:
                 mu = mu.reshape((mu.size, 1))
             if cov.ndim == 1:
                 cov = cov.reshape((cov.size, 1, 1))
-            w = self.allocation.get_weight(mu, cov, cost_scale = self.transforms.cost_scale())        
+            # transform back into appropriate scale
+            mu, cov = self.transforms.scale_back_moments(mu, cov)
+            w = self.allocation.get_weight(mu, cov)        
             # set on original data!
             data.w[:] = w
             data.s[:] = np.einsum('ij,ij->i', w, data.y)
@@ -149,38 +151,14 @@ class Model:
             mu = mu.reshape((mu.size, 1))
         if cov.ndim == 1:
             cov = cov.reshape((cov.size, 1, 1))        
-        w = self.allocation.get_weight(mu, cov, cost_scale = self.transforms.cost_scale(), live = True, prev_w = prev_w)        
+        # transform back into appropriate scale
+        mu, cov = self.transforms.scale_back_moments(mu, cov)
+        w = self.allocation.get_weight(mu, cov, live=True)  
         return np.atleast_1d(w)
         
     def save(self, filepath):
         with open(filepath, 'wb') as f:
             pickle.dump(self, f, pickle.HIGHEST_PROTOCOL)
-
-# changed...
-# support several models applied to a dataset with appropriate mixing
-class ModelList(list):
-    def __init__(self):
-        pass
-
-    def view(self, plot = False, **kwargs):
-        pass
-
-    def add(self, model:Model):
-        pass
-
-    def estimate(self, data:Data):
-        pass
-
-    def evaluate(self, data:Data):
-        pass
-
-    def live(self, data:Data, prev_w = None, **kwargs):
-        pass
-
-    def save(self, filepath):
-        with open(filepath, 'wb') as f:
-            pickle.dump(self, f, pickle.HIGHEST_PROTOCOL)
-
 
 
 class ModelSet(dict):
@@ -369,6 +347,53 @@ class ModelSet(dict):
             pickle.dump(self, f, pickle.HIGHEST_PROTOCOL)
 
 
+
+
+
+
+
+
+if __name__ == '__main__':
+
+    # generate some data
+    n = 1000
+    x = np.random.normal(0, 1, n)
+    a = 0
+    b = 0.2
+    y = a+b*x+np.random.normal(0,0.1,n)
+    
+
+
+    df1 = pd.DataFrame()
+    df1['x'] = x
+    df1['y'] = y
+    df1.index = pd.date_range('2000-01-01', freq = 'D', periods = n)
+    df1.plot.scatter('x', 'y')
+    plt.show()
+
+
+    data = Data.from_df(df1)
+    print(data)
+
+
+    import tm
+    base_model = tm.base.LinRegr()
+    alloc = tm.allocation.Optimal()
+    transforms = tm.transforms.Transforms(
+                            y_transform = tm.transforms.ScaleTransform(),
+                            x_transform = tm.transforms.ScaleTransform()
+                            )
+
+    model = Model(base_model = base_model, allocation = alloc, transforms = transforms)    
+    model.estimate(data)
+    model.view()
+    model.evaluate(data)
+    print('-------')
+    plt.plot(data.w)
+    plt.show()
+
+
+    pass
 
 
 

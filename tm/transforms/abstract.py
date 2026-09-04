@@ -30,6 +30,11 @@ class Transform(ABC):
         """Subclasses must implement this method"""
         pass
 
+    @abstractmethod
+    def scale_back_moments(self, mu:np.ndarray, cov:np.ndarray):
+        """Subclasses must implement this method"""
+        pass        
+
 
 # Transforms class: a dict of transforms
 class Transforms():
@@ -71,8 +76,6 @@ class Transforms():
             if data.t is None: raise Exception('t_transform is defined for data without t...')
             self.t_transform.estimate(data.t) 
 
-
-    
     def transform(self, data:Data):
         # maybe refactor a bit Data class to make this more clear!
         if self.has_transforms:
@@ -84,4 +87,10 @@ class Transforms():
         if self.t_transform:
             data.t[:] = self.t_transform.transform(data.t)
         return data
+
+    def scale_back_moments(self, mu:np.ndarray, cov:np.ndarray):
+        if self.y_transform:
+            return self.y_transform.scale_back_moments(mu, cov)
+        else:
+            return mu, cov
 

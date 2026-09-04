@@ -27,8 +27,8 @@ class Allocation(ABC):
         '''
         pass
 
-    def set_use_m2(self, use_m2 = True):
-        self.use_m2 = use_m2
+    def set_use_M(self, use_M = True):
+        self.use_M = use_M
 
 
 def soft(m, v, c, b):
@@ -44,19 +44,17 @@ def soft(m, v, c, b):
 
 
 class Optimal(Allocation):
-    def __init__(self, quantile = 0.95, max_w = 1, c = None, seq_w = False, demean = False):
+    def __init__(self, quantile=0.95, diagonal=False, use_M=False, demean=False):
         self.quantile = quantile
-        self.max_w = max_w
-        self.c = c
-        self.seq_w = seq_w
+        self.diagonal = diagonal
         self.demean = demean
-        self.use_m2 = True
-        self.w_norm = 1
-        self.w_mean = 0
+        self.use_M = True
+        
+        self.w_mean = None
 
 
-    def set_use_m2(self, use_m2 = True):
-        self.use_m2 = use_m2
+    def set_use_M(self, use_M = True):
+        self.use_M = use_M
 
     def view(self):
         print('Weight norm: ', self.w_norm)
@@ -64,50 +62,49 @@ class Optimal(Allocation):
 
     def estimate(self, mu, cov, **kwargs):                
         # make sure inputs make sense
-        assert mu.ndim == 2, "mu must be a matrix"
-        assert cov.ndim == 3, "cov must be a tensor"
-        p = mu.shape[1]
-        if p == 1:
-            m = mu.ravel()
-            v = cov.ravel()
-            if self.use_m2:
-                w = m / (v + m*m)
-            else:
-                w = m / v
-            if w.size != 0:
-                self.w_norm = np.quantile(np.abs(w), self.quantile, method = 'closest_observation') # using this method also work for state models
-                if self.w_norm == 0: self.w_norm = 1
-                self.w_mean = np.mean(w)
-            else:
-                self.w_norm = 1
-                self.w_mean = 0
-
-        else:
-
-            if self.use_m2:
-                M = cov + np.einsum('ni,nj->nij', mu, mu) 
-                M_inv = np.linalg.inv(M)
-            else:
-                M_inv = np.linalg.inv(cov)
-            w = np.einsum('nij,ni->nj', M_inv, mu)
-
-            if w.shape[0] != 0:
-                self.w_norm = np.quantile(np.sum(np.abs(w), axis = 1), self.quantile, method = 'closest_observation') # using this method also work for state models
-                if self.w_norm == 0: self.w_norm = 1
-                self.w_mean = np.mean(w, axis = 0)
-            else:
-                self.w_norm = 1
-                self.w_mean = np.zeros(w.shape[1])
-            #raise Exception('Optimal for p>1 not yet implemented')
-    
-    def norm_w_1d(self, w):
-        # demean
+        # w = self.get_weight(mu, cov, live=False)
+        
         if self.demean:
-            w -= self.w_mean
-        w /= self.w_norm
-        idx = np.abs(w) > self.max_w
-        w[idx] = np.sign(w[idx])*self.max_w
-        return w
+            w = self.get_weight(mu, cov, live=False)
+            self.w_mean = np.mean(w, axis = 0)
+        else:
+            self.w_mean = np.zeros(mu.shape[1])
+
+        pass
+
+        # if p == 1:
+        #     m = mu.ravel()
+        #     v = cov.ravel()
+        #     if self.use_M:
+        #         w = m / (v + m*m)
+        #     else:
+        #         w = m / v
+        #     if w.size != 0:
+        #         self.w_norm = np.quantile(np.abs(w), self.quantile, method = 'closest_observation') # using this method also work for state models
+        #         if self.w_norm == 0: self.w_norm = 1
+        #         self.w_mean = np.mean(w)
+        #     else:
+        #         self.w_norm = 1
+        #         self.w_mean = 0
+
+        # else:
+
+        #     if self.use_M:
+        #         M = cov + np.einsum('ni,nj->nij', mu, mu) 
+        #         M_inv = np.linalg.inv(M)
+        #     else:
+        #         M_inv = np.linalg.inv(cov)
+        #     w = np.einsum('nij,ni->nj', M_inv, mu)
+
+        #     if w.shape[0] != 0:
+        #         self.w_norm = np.quantile(np.sum(np.abs(w), axis = 1), self.quantile, method = 'closest_observation') # using this method also work for state models
+        #         if self.w_norm == 0: self.w_norm = 1
+        #         self.w_mean = np.mean(w, axis = 0)
+        #     else:
+        #         self.w_norm = 1
+        #         self.w_mean = np.zeros(w.shape[1])
+        #     #raise Exception('Optimal for p>1 not yet implemented')
+    
 
     def norm_w_2d(self, w):
         if self.demean:
@@ -116,77 +113,31 @@ class Optimal(Allocation):
         idx = np.sum(np.abs(w), axis = 1) > self.max_w
         w[idx] /= np.sum(np.abs(w[idx]), axis = 1)[:,None] #np.sign(w[idx])*self.max_w
         return w
+
+    def clip_w(self, w):
+        pass
         
+    def get_weight(self, mu, cov, live=False, **kwargs):
+        assert mu.ndim == 2, "mu must be a matrix"
+        assert cov.ndim == 3, "cov must be a tensor"
 
-    def get_weight(self, mu, cov, cost_scale = 1, live = False, prev_w = None, **kwargs):                
-        p = mu.shape[1]
-        if p == 1:
-            m = mu.ravel()
-            v = cov.ravel()
-            # no costs aware alloc
-            if self.c is None:
-                if self.use_m2:
-                    w = m / (v + m*m)
-                else:
-                    w = m / v
-                w = self.norm_w_1d(w)
-                if not live:
-                    return np.atleast_2d(w.T).T   
-                else:
-                    return w[-1]
-
-            # costs aware alloc
-            else:
-                # create costs
-                if isinstance(cost_scale, np.ndarray):
-                    assert cost_scale.ndim == 1, "cost_scale must be a vector"
-                    assert cost_scale.size == 1, "cost_scale must have a single entry"
-                    cost_scale = cost_scale[0]
-                c = self.c / cost_scale
-                # sequential weights
-                if self.seq_w:
-                    w = np.zeros_like(m)
-                    b = 0
-                    for i in range(w.size):
-                        w[i] = soft(m[i], v[i], c, b)
-                        b = w[i] # use current weight to condition the next step
-                    if not live:
-                        w = self.norm_w_1d(w)
-                        return np.atleast_2d(w.T).T   
-                    else:
-                        # adjust last entry
-                        if prev_w is not None:                            
-                            w[-1] = soft(m[i], v[i], c, prev_w)    
-                        w = self.norm_w_1d(w)
-                        return w[-1]
-
-                else:
-                    w = np.zeros_like(m)
-                    idx = m>c 
-                    w[idx] = (m[idx]-c) / (v[idx]+m[idx]*m[idx])
-                    idx = m<-c 
-                    w[idx] = (m[idx]+c) / (v[idx]+m[idx]*m[idx])
-                    w = self.norm_w_1d(w)
-                    if not live:
-                        return np.atleast_2d(w.T).T   
-                    else:
-                        return w[-1]
-                        
+        if self.use_M:
+            M = cov + np.einsum('ni,nj->nij', mu, mu)
         else:
-                        
-            if self.use_m2:
-                M = cov + np.einsum('ni,nj->nij', mu, mu) 
-                M_inv = np.linalg.inv(M)
-            else:
-                M_inv = np.linalg.inv(cov)
+            M = cov
 
-            w = np.einsum('nij,ni->nj', M_inv, mu)
+        if self.diagonal:
+            w = mu / np.diagonal(M, axis1=1, axis2=2)
+        else:
+            w = np.linalg.solve(M, mu[..., None])[..., 0]
 
-            w = self.norm_w_2d(w)
-            if not live:
-                return np.atleast_2d(w.T).T   
-            else:
-                return w[-1]
+        if self.w_mean:
+            w -= self.w_mean
+
+        if not live:
+            return w   
+        else:
+            return w[-1]
 
 if __name__ == '__main__':
     np.random.seed(0)
@@ -198,12 +149,3 @@ if __name__ == '__main__':
     print(out)
     print()
 
-    opt = Optimal(c = 0.5)
-    out = opt.get_weight(mu, cov)
-    print(out)
-    print()
-
-    opt = Optimal(c = 0.5, seq_w = True)
-    out = opt.get_weight(mu, cov)
-    print(out)
-    print()
