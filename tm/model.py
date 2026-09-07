@@ -130,8 +130,8 @@ class Model:
         # similar computations as in evaluate
         # note that data must be provided in a defined way for live evaluation
 
-        assert all(e in self.needed_columns for e in data.columns), "data for evaluate does not contain the needed columns"
-        data_f = data._get_columns(self.needed_columns) # filter because it may come with more columns in some special cases
+        #assert all(e in self.needed_columns for e in data.columns), "data for evaluate does not contain the needed columns"
+        data_f = data#._get_columns(self.needed_columns) # filter because it may come with more columns in some special cases
 
         # apply transforms
         transformed_data = self.transforms.transform(data_f)
