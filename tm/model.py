@@ -191,7 +191,7 @@ class ModelSet(dict):
 
         self.model = model        
         self.ensemble_model = ensemble_model
-        self.models_map = models_map # [{'master_model':Model, 'apply_to':[], 'columns':['y1', 'x1','x2','z1']}] - needs to exhaust list in data...
+        self.models_map = models_map # [{'model':Model, 'apply_to':[]] - needs to exhaust list in data...
         self.individual_alloc_norm = individual_alloc_norm
         self.k_clip_quantile = k_clip_quantile
         self.ws_type = ws_type
@@ -289,26 +289,17 @@ class ModelSet(dict):
 
             # check if data keys are covered
             covered_keys = []
-            for e in self.master_models_map: covered_keys += e.get('apply_to', [])
+            for e in self.models_map: covered_keys += e.get('apply_to', [])
             covered_keys = list(set(covered_keys))
             for k, _ in dataset.items(): assert k in covered_keys, "not all elements in dataset assigned to a master_model"
-
-            for elem in self.master_models_map:
+            for elem in self.models_map:
                 apply_to = elem.get('apply_to')
-                master_model = elem.get('master_model')
-                columns = elem.get('columns')
-
+                model = elem.get('master_model')
                 data = None
                 for k, data_ in dataset.items():
                     if k in apply_to:
-
-                        if columns:
-                            # check if data_ contain all needed columns
-                            assert all(e in data_.columns for e in columns), "data does not contain the needed columns"
-                            data_ = data_._get_columns(columns)
-
                         # copy the master model
-                        k_model = master_model.copy()
+                        k_model = model.copy()
                         k_model.estimate_transforms(data_)                
                         # transforms
                         transformed_data_ = k_model.transform(data_)                                
@@ -320,25 +311,18 @@ class ModelSet(dict):
                         self[k] = k_model
 
                 if data.empty: raise Exception('data is empty. should not happen')
-                
-                # store data columns to check and filter on evaluation and live
-                master_model.needed_columns = data.columns
-                
                 # estimate master model
-                master_model.estimate_base_model(data)            
-                # estimate allocation
-                if not self.individual_alloc_norm:
-                    master_model.estimate_allocation(data)    
+                model.estimate_base_model(data)            
 
                 # set base models and estimate allocation
                 for k, data in dataset.items():
                     if k in apply_to:
-                        self[k].set_base_model(master_model.base_model)
+                        # need to redo here the operations                                
+                        self[k].set_base_model(model.base_model)
                         # set the global one (even if not estimated yet...)
-                        self[k].set_allocation(master_model.allocation)
+                        self[k].set_allocation(model.allocation)
                         # estimate allocation for each one
-                        if self.individual_alloc_norm:
-                            self[k].estimate_allocation(self[k].transform(data))
+                        self[k].estimate_allocation(self[k].transform(data))
 
         elif self.model:
             # if a master model is present, apply transforms, stack the data, and estimate it
@@ -357,14 +341,11 @@ class ModelSet(dict):
                 self[k] = k_model
 
             if data.empty: raise Exception('data is empty. should not happen')
-            # store data columns to check and filter on evaluation and live
-            self.model.needed_columns = data.columns
             # estimate master model
             self.model.estimate_base_model(data)            
 
             # set base models and estimate allocation
             for k, data in dataset.items():
-                self[k].needed_columns = self.model.needed_columns
                 # need to redo here the operations                                
                 self[k].set_base_model(self.model.base_model)
                 # set the global one (even if not estimated yet...)
@@ -414,7 +395,7 @@ class ModelSet(dict):
         # set portfolio weight on dataset                
         #if self.ensemble_model:
         for k, data in dataset.items():
-            data.pw[:] *= self.ws.get(k, 0)#*nk/n        
+            data.pw[:] *= self.ws.get(k, 0)
         return dataset
 
     def live(self, dataset:Dataset):
