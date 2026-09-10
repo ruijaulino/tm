@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+import matplotlib.pyplot as plt
 import numpy as np
 
 
@@ -44,15 +45,18 @@ def soft(m, v, c, b):
 
 
 class Optimal(Allocation):
-    def __init__(self, quantile=0.95, diagonal=False, use_M=False, demean=False):
-        self.quantile = quantile
+    def __init__(self, clip_quantile=0.95, k_std = 3, diagonal=False, use_M=False, max_w = 1, demean=False):
+        self.clip_quantile = clip_quantile
+        self.k_std = k_std
         self.diagonal = diagonal
         self.demean = demean
         self.use_M = True
-        
+        self.max_w = max_w        
         self.w_mean = None
         self.quantiles = None
         self.k = 1
+        self.leverage_scale = 1
+        self.aux_mult = 1
 
     def set_use_M(self, use_M = True):
         self.use_M = use_M
@@ -60,32 +64,49 @@ class Optimal(Allocation):
     def view(self):
         print('k: ', self.k)
         print('Weight mean: ', self.w_mean)
+        print('leverage scale: ', self.leverage_scale)
 
     def estimate(self, mu, cov, **kwargs):                
         # make sure inputs make sense
         # w = self.get_weight(mu, cov, live=False)
         
         # calculate quantiles to clip weights later
-        w = self.get_weight(mu, cov, live=False)
-        self.quantiles = np.quantile(np.abs(w), self.quantile, axis = 0, method = 'closest_observation')
-        # clip weights
-        w = np.clip(w, -self.quantiles, self.quantiles)
-        if self.demean:
-            self.w_mean = np.mean(w, axis = 0)
+
+
+        self.k = 1. # make sure it is 1
+        if mu.size > 50:
+            w = self.get_weight(mu, cov, live=False, in_estimate = True)
+            #print(w)
+            #plt.hist(w.ravel())
+            #plt.show()
+            
+            self.quantiles = np.quantile(np.abs(w), self.clip_quantile, axis = 0, method = 'closest_observation')
+            # clip weights
+            w = np.clip(w, -self.quantiles, self.quantiles)
+            if self.demean:
+                self.w_mean = np.mean(w, axis = 0)
+            else:
+                self.w_mean = np.zeros(mu.shape[1])
+            # calculate leverage scale
+            l = np.abs(w).sum(axis=1)
+            self.leverage_scale = np.std(l)
+            # self.leverage_scale = np.sqrt(np.sum(np.cov(w.T)))
+            self.k = self.k_std*self.leverage_scale
+
+            #w = self.get_weight(mu, cov, live=False, in_estimate = True)
+            #print(w)
+            #plt.hist(w.ravel())
+            #plt.show()
+            
+
+            #print(sdfsd)
+            # self.k = np.quantile(np.sum(np.abs(w), axis = 1), self.quantile, method = 'closest_observation') # using this method also work for state models
+            if self.k == 0: self.k = 1
         else:
-            self.w_mean = np.zeros(mu.shape[1])
-        self.k = np.quantile(np.sum(np.abs(w), axis = 1), self.quantile, method = 'closest_observation') # using this method also work for state models
-        if self.k == 0: self.k = 1
-    
-    def norm_w_2d(self, w):
-        if self.demean:
-            w -= self.w_mean
-        w /= self.w_norm
-        idx = np.sum(np.abs(w), axis = 1) > self.max_w
-        w[idx] /= np.sum(np.abs(w[idx]), axis = 1)[:,None] #np.sign(w[idx])*self.max_w
-        return w
+            self.aux_mult = 0
+        #    self.k = 1e10
         
-    def get_weight(self, mu, cov, live=False, **kwargs):
+    def get_weight(self, mu, cov, live=False, in_estimate=False, **kwargs):
         assert mu.ndim == 2, "mu must be a matrix"
         assert cov.ndim == 3, "cov must be a tensor"
 
@@ -105,8 +126,13 @@ class Optimal(Allocation):
 
         if self.w_mean:
             w -= self.w_mean
+        # w *= self.aux_mult # in case there is insuficient training data
+        
+        w /= self.k
 
-        #w /= self.k
+        #if not in_estimate:
+        #    # need to clip again because master k
+        #    w = np.clip(w, -self.max_w, self.max_w)            
 
         if not live:
             return w   

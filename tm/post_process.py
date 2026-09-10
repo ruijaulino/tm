@@ -334,7 +334,9 @@ class Paths(list):
             path_w_abs_sum = path_w_abs_sum.fillna(0)
             path_w_sum = path_w_sum.fillna(0)
 
-            path_pw /= np.sum(np.abs(path_pw), axis = 1).values[:,None]
+            # this is needed to make a proper comparisson. we may be testing in a period where there is not data for some assets that 
+            #  are present in the training data, then it creates a distortion due to low investment in the period
+            # path_pw /= np.sum(np.abs(path_pw), axis = 1).values[:,None]
             path_pw *= multiplier
             non_zero_counts = path_count_non_zero.apply(lambda row: (row != 0).sum(), axis=1)
         

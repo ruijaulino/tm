@@ -47,8 +47,11 @@ class Model:
 
     def set_k(self, k):
         self.allocation.k = k
-    
 
+    @property
+    def leverage_scale(self):
+        return self.allocation.leverage_scale 
+    
     def copy(self):
         return copy.deepcopy(self)
 
@@ -173,45 +176,32 @@ class Model:
             pickle.dump(self, f, pickle.HIGHEST_PROTOCOL)
 
 
-
-def inner_cv_models(dataset:Dataset, modelset:ModelSet, k_folds:int = 4, seq_path:bool = False, burn_fraction:float = 0.1, min_burn_points:int = 3):
-    # maybe copies not necessary
-    dataset_ = cvbt_path(
-                dataset = dataset.copy(), 
-                modelset = modelset.copy(),
-                k_folds = k_folds, 
-                seq_path = seq_path, 
-                start_fold = 0, 
-                burn_fraction = burn_fraction, 
-                min_burn_points = min_burn_points
-                )
-    keys = []
-    w = []
-    for k, data in dataset_.items():
-        if data.n > 5:
-            keys.append(k)
-            ws = np.mean(data.s) / np.var(data.s)
-            ws = max(0, ws)
-            w.append(ws)
-        else:
-            w.append(0)
-    w = np.array(w)
-    #d = np.sum(w)
-    #if d!= 0: w/=d
-    return dict(zip(keys, w))    
-
-
 # change the name later...
 class ModelSet(dict):
-    def __init__(self, model:Model = None, ensemble_model:EnsembleModel = None, models_map:List = None, individual_alloc_norm:bool = False):
+    def __init__(
+                    self, 
+                    model:Model = None, 
+                    ensemble_model:EnsembleModel = None, 
+                    models_map:List = None, 
+                    individual_alloc_norm:bool = False, 
+                    k_clip_quantile = 0.8,
+                    ws_type = 'signed', 
+                    inner_cv_params = {'k_folds':2, 'seq_path':False, 'burn_fraction':0.1, 'min_burn_points':3}
+                    ):
+
         self.model = model        
         self.ensemble_model = ensemble_model
         self.models_map = models_map # [{'master_model':Model, 'apply_to':[], 'columns':['y1', 'x1','x2','z1']}] - needs to exhaust list in data...
         self.individual_alloc_norm = individual_alloc_norm
+        self.k_clip_quantile = k_clip_quantile
+        self.ws_type = ws_type
+        assert self.ws_type in ['simple', 'signed', 'equal'], "unknown ws_type"
+        self.inner_cv_params = inner_cv_params
         # after a model is run this variable stores the dataset 
         # that was used to estimate the model!    
+
         self.estimation_dataset = None
-        self.inner_cv = True
+        self._aux_inner_cv = True
         self.ws = None
 
     def copy(self):
@@ -222,6 +212,10 @@ class ModelSet(dict):
         print("******* ModelSet *******")
         print()
         print('Model weights')
+        
+        plt.plot(np.array(list(self.ws.values())))
+        plt.show()
+
         for k, v in self.ws.items():
             print(k, v)
         print()
@@ -242,7 +236,42 @@ class ModelSet(dict):
             self[key] = model
         else:
             print(f'Warning: a model was already set for key {key}')
-    
+
+    def init_ws(self, dataset:Dataset, modelset:ModelSet, k_folds:int = 2, seq_path:bool = False, burn_fraction:float = 0.1, min_burn_points:int = 3, **kwargs):
+
+        # compute ws as one or zero
+        if self.ws_type=='signed':
+            dataset_ = cvbt_path(
+                        dataset = dataset.copy(), 
+                        modelset = modelset.copy(),
+                        k_folds = k_folds, 
+                        seq_path = seq_path, 
+                        start_fold = 0, 
+                        burn_fraction = burn_fraction, 
+                        min_burn_points = min_burn_points
+                        )
+            keys = []
+            w = []
+            for k, data in dataset_.items():
+                if data.n > 50:
+                    keys.append(k)
+                    ws = np.sign(np.mean(data.s))
+                    ws = max(0, ws)
+                    w.append(ws)
+                else:
+                    w.append(0)
+            w = np.array(w)
+            return dict(zip(keys, w))    
+        else:
+            keys = []
+            w = []
+            for k, data in dataset.items():
+                w.append(1)
+                keys.append(k)
+            w = np.array(w)
+            w = np.ones_like(w, dtype = np.float64)
+            return dict(zip(keys, w))  
+
     def estimate(self, dataset:Dataset, store_details:bool = True):                
         
         assert isinstance(dataset, Dataset), "ModelSet can only be used with a Dataset object"
@@ -250,17 +279,13 @@ class ModelSet(dict):
         
         # estimate ensemble_model, may do nestec cv here
         self.ws = {}
-        if self.inner_cv:
-            # create a model set without the ensemble model
+        if self._aux_inner_cv:
             tmp_modelset = self.copy()
-            tmp_modelset.inner_cv = False # set to None
-            self.ws = inner_cv_models(dataset, tmp_modelset)
-            
+            tmp_modelset._aux_inner_cv = False # set to None
+            self.ws = self.init_ws(dataset, tmp_modelset, **self.inner_cv_params)
+        
         # estimate models
         if self.models_map:
-
-            # if several models apply to the same dataset (because they may be trained with a larger dataset)
-            #     we need to mix predictive distribution somehow
 
             # check if data keys are covered
             covered_keys = []
@@ -336,32 +361,42 @@ class ModelSet(dict):
             self.model.needed_columns = data.columns
             # estimate master model
             self.model.estimate_base_model(data)            
-            # estimate allocation
-            if not self.individual_alloc_norm:
-                self.model.estimate_allocation(data)    
 
             # set base models and estimate allocation
             for k, data in dataset.items():
                 self[k].needed_columns = self.model.needed_columns
+                # need to redo here the operations                                
                 self[k].set_base_model(self.model.base_model)
                 # set the global one (even if not estimated yet...)
                 self[k].set_allocation(self.model.allocation)
                 # estimate allocation for each one
-                if self.individual_alloc_norm:
-                    self[k].estimate_allocation(self[k].transform(data))
+                self[k].estimate_allocation(self[k].transform(data))
 
         else:
             for k, data in dataset.items():
                 assert k in self, "dataset contains a key that is not defined in ModelSet. Exit.."
                 self[k].estimate(data)   
 
-        #
-        # compute largest k among models
-        master_k = 0
-        for _, m in self.items():
-            master_k = max(master_k, m.k)
-        for k, m in self.items():
-            m.set_k(master_k)
+        # attribute k to ws
+        for k, _ in dataset.items():
+            if self.ws_type != 'equal':
+                if k in self.ws:
+                    self.ws[k] *=self[k].k 
+                else:
+                    self.ws[k] = 0
+
+        tmp = np.array(list(self.ws.values()))
+        # if not equal weight, clip because of k variation
+        if self.ws_type != 'equal':
+            # clipping is needed in order not to have a single strategy with very low vol and returns to dominate...
+            quantile = np.quantile(tmp, self.k_clip_quantile, axis = 0, method = 'closest_observation')
+            # clip weights
+            tmp = np.clip(tmp, -quantile, quantile)        
+        s = np.sum(tmp)
+        if s!=0:
+            tmp /= s
+        self.ws = dict(zip(list(self.ws.keys()), tmp))
+
 
         # when we train a final model we can store the dataset that was used to estimate the
         # model. If future checks are needed we can just run inference again with it!
@@ -370,13 +405,16 @@ class ModelSet(dict):
 
     def evaluate(self, dataset:Dataset):
         # dataset_dict is a dict of dataset
+        #n = float(len(self.ws))
+        #nk = 0.
         for k, data in dataset.items():
             assert k in self, "dataset contains a key that is not defined in ModelSet. Exit.."                        
             self[k].evaluate(data)   
+            #nk += 1.
         # set portfolio weight on dataset                
         #if self.ensemble_model:
         for k, data in dataset.items():
-            data.pw[:] *= self.ws.get(k, 0)        
+            data.pw[:] *= self.ws.get(k, 0)#*nk/n        
         return dataset
 
     def live(self, dataset:Dataset):

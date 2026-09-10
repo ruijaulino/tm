@@ -48,9 +48,10 @@ class ScaleTransform(Transform):
     
     def scale_back_moments(self, mu, cov):
         """Subclasses must implement this method"""
-        if not self.mean or not self.scale:
-            self.mean = np.zeros(mu.shape[1])
+        if not self.scale:
             self.scale = np.ones(mu.shape[1])            
+        if not self.mean:
+            self.mean = np.zeros(mu.shape[1])
         mu = mu * self.scale + self.mean
         cov = cov * self.scale[:, None] * self.scale[None, :]
         return mu, cov
