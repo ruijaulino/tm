@@ -75,23 +75,12 @@ def bootstrap_sharpe(s, n_boot = 1000):
 
 def block_bootstrap_sharpe(s, n_boot=1000, block_size=10):
     """
-    Vectorized moving block bootstrap Sharpe samples for a 1D return series.
+    Moving-block-bootstrap Sharpe samples without materializing the sampled paths.
 
-    Parameters
-    ----------
-    s : array-like, shape (n,)
-        1D array of returns.
-    n_boot : int
-        Number of bootstrap samples.
-    block_size : int
-        Length of each block.
-    ddof : int
-        Degrees of freedom for std.
-
-    Returns
-    -------
-    boot_samples : np.ndarray, shape (n_boot,)
-        Bootstrap Sharpe samples.
+    The sampled Sharpe only depends on the first two raw moments.  Instead of
+    constructing an ``(n, n_boot)`` array of sampled returns, compute the sum and
+    squared-sum of each sampled block from prefix sums.  This reduces both memory
+    and work by roughly a factor of ``block_size``.
     """
     s = np.asarray(s)
     if s.ndim != 1:
@@ -104,31 +93,36 @@ def block_bootstrap_sharpe(s, n_boot=1000, block_size=10):
     n_blocks = int(np.ceil(n / block_size))
     max_start = n - block_size
 
-    # shape: (n_blocks, n_boot)
-    starts = np.random.randint(0, max_start + 1, size=(n_blocks, n_boot))
+    # Keep the same draw shape/distribution as the previous implementation.
+    starts = np.random.randint(
+        0, max_start + 1, size=(n_blocks, n_boot)
+    )
 
-    # shape: (block_size,)
-    offsets = np.arange(block_size)
+    # All blocks are full length except the last one, which is truncated so the
+    # bootstrap sample has exactly n observations.
+    lengths = np.full(n_blocks, block_size, dtype=np.int64)
+    lengths[-1] = n - (n_blocks - 1) * block_size
+    ends = starts + lengths[:, None]
 
-    # shape: (n_blocks, n_boot, block_size)
-    idx = starts[..., None] + offsets
-    
-    # flatten first and last axes -> total sampled length >= n
-    # shape after reshape: (n_blocks*block_size, n_boot)
-    idx = idx.transpose(0, 2, 1).reshape(n_blocks * block_size, n_boot)
+    # Prefix sums give O(1) sum and squared-sum for every sampled block.
+    csum = np.empty(n + 1, dtype=np.float64)
+    csum[0] = 0.0
+    np.cumsum(s, dtype=np.float64, out=csum[1:])
 
-    # truncate to length n
-    idx = idx[:n, :]
+    csum2 = np.empty(n + 1, dtype=np.float64)
+    csum2[0] = 0.0
+    np.cumsum(np.square(s, dtype=np.float64), dtype=np.float64, out=csum2[1:])
 
-    # sampled returns, shape: (n, n_boot)
-    s_boot = s[idx]
+    total = np.sum(csum[ends] - csum[starts], axis=0)
+    total2 = np.sum(csum2[ends] - csum2[starts], axis=0)
 
-    mu = np.mean(s_boot, axis=0)
-    sigma = np.std(s_boot, axis=0)
+    mu = total / n
+    var = total2 / n - mu * mu
+    # Protect against tiny negative values caused by floating-point cancellation.
+    var = np.maximum(var, 0.0)
+    sigma = np.sqrt(var)
 
-    boot_samples = mu / sigma
-    
-    return boot_samples
+    return mu / sigma
 
 
 
@@ -265,131 +259,205 @@ class Paths(list):
         return out
 
     def portfolio_post_process(self, pct_fee = 0., seq_fees = False, sr_mult = np.sqrt(250), n_boot = 1000, block_size = 20, alpha = 0.05, alpha_n = 1000, view_weights = True, use_pw = True, multiplier = 1, start_date = '', end_date = '', resample_to = 'B'):
+        """
+        Post-process a set of portfolio paths.
 
+        The expensive part of the original implementation was repeatedly building and
+        resampling pandas objects for s, pw and the full weight matrix.  Here we
+        resample only an integer row-position Series, then use those positions to
+        index the NumPy arrays directly.  This keeps the exact pandas resampling bins
+        while avoiding conversion/resampling of the n x p weight matrix.
 
+        Notes
+        -----
+        The fast resampling path assumes s, pw and w contain finite values.  This is
+        the normal output of the backtest pipeline.  If NaNs are intentionally stored
+        inside these arrays, pandas ``resample(...).last()`` has column-wise NaN
+        semantics that are not identical to selecting the last physical row.
+        """
 
-     
-    
         if len(self) == 0:
             print('No paths to process!')
             return
-        
+
         keys = list(self[0].keys())
         if not isinstance(pct_fee, dict):
-            pct_fee = {k:pct_fee for k in keys}
+            pct_fee = {k: pct_fee for k in keys}
 
-
-        paths_s=[]
-        paths_pw=[]
-        paths_leverage=[]
+        paths_s = []
+        paths_pw = []
+        paths_leverage = []
         paths_net_leverage = []
-        paths_n_datasets=[]
+        paths_n_datasets = []
 
-        paths_s_datasets_boot = []
-        
         for dataset in self:
+            parts = {}
 
-
-
-            path_s=[]
-            path_pw=[]
-            path_w_abs_sum=[] # to build leverage
-            path_w_sum = []
-            for key, data in dataset.items():
-                s = data.s
+            for key in keys:
+                data = dataset[key]
                 w = data.w
-                pw = data.pw   
-                ts = data.index()
-                if not use_pw:
-                    pw = np.ones_like(pw) 
+                n = data.n
 
-                s = pd.DataFrame(calculate_fees(s[:,None], w[:,:,None], seq_fees, pct_fee.get(key, 0)), columns = [key], index=ts)
-                if resample_to is not None:
-                    s = s.resample(resample_to).last().fillna(0)
-                path_s.append(s)
-                pw = pd.DataFrame(pw[:,None], columns = [key], index = ts)
-                if resample_to is not None:
-                    pw = pw.resample(resample_to).last().fillna(0)
-                path_pw.append(pw)
-                w = pd.DataFrame(w, columns = data.w_cols, index = ts)
-                if resample_to is not None:
-                    w = w.resample(resample_to).last().fillna(0)
-                path_w_abs_sum.append(pd.DataFrame(w.abs().sum(axis=1), columns=[key]))
-                path_w_sum.append(pd.DataFrame(w.abs().sum(axis=1),columns = [key]))
+                # Use pandas only to determine the output bins and the last source
+                # row in each bin.  This is much cheaper than resampling w itself.
+                index = pd.to_datetime(data.ts, unit='s')
+                if resample_to is None:
+                    out_index = index
+                    valid = np.ones(n, dtype=bool)
+                    pos = np.arange(n, dtype=np.intp)
+                else:
+                    pos_s = pd.Series(
+                        np.arange(n, dtype=np.int64),
+                        index=index,
+                        copy=False,
+                    ).resample(resample_to).last()
+                    out_index = pos_s.index
+                    valid = pos_s.notna().to_numpy()
+                    pos = pos_s[valid].to_numpy(dtype=np.intp, copy=False)
 
-            path_s = pd.concat(path_s, axis = 1)
-            path_pw = pd.concat(path_pw, axis = 1)
-            path_w_abs_sum = pd.concat(path_w_abs_sum, axis = 1)
-            path_w_sum = pd.concat(path_w_sum, axis = 1)
-            path_s.columns = keys
-            path_pw.columns = keys
-            path_w_abs_sum.columns = keys
-            path_w_sum.columns = keys
-            # fill na with zero
-            path_s = path_s.fillna(0)
-            path_count_non_zero = path_pw.copy(deep = True)
-            path_count_non_zero = path_count_non_zero.fillna(0)
-            
-            path_pw = path_pw.ffill() #fillna(method = 'ffill')
-            path_w_abs_sum = path_w_abs_sum.fillna(0)
-            path_w_sum = path_w_sum.fillna(0)
+                m = len(out_index)
+                s_out = np.zeros(m, dtype=np.result_type(data.s, np.float64))
+                pw_out = np.zeros(m, dtype=np.result_type(data.pw, np.float64))
+                gross_out = np.zeros(m, dtype=np.float64)
+                net_out = np.zeros(m, dtype=np.float64)
 
-            # this is needed to make a proper comparisson. we may be testing in a period where there is not data for some assets that 
-            #  are present in the training data, then it creates a distortion due to low investment in the period
-            # path_pw /= np.sum(np.abs(path_pw), axis = 1).values[:,None]
-            path_pw *= multiplier
-            non_zero_counts = path_count_non_zero.apply(lambda row: (row != 0).sum(), axis=1)
-        
-            path_s = pd.DataFrame(np.sum(path_s*path_pw, axis = 1), columns=['s'])
+                if pos.size:
+                    w_last = w[pos]
+                    gross_last = np.sum(np.abs(w_last), axis=1)
+                    net_last = np.sum(w_last, axis=1)
 
-            paths_s.append(path_s)
+                    fee = pct_fee.get(key, 0)
+                    if np.ndim(fee) != 0:
+                        raise ValueError('pct_fee values must be scalars')
+
+                    if fee == 0:
+                        s_last = data.s[pos]
+                    elif seq_fees:
+                        # calculate_fees() is applied before resampling in the old
+                        # implementation.  Therefore turnover at a retained row t is
+                        # |w[t] - w[t-1]|, not the change from the previous retained row.
+                        turnover = np.zeros(pos.size, dtype=np.float64)
+                        has_prev = pos > 0
+                        if np.any(has_prev):
+                            p = pos[has_prev]
+                            turnover[has_prev] = np.sum(
+                                np.abs(w[p] - w[p - 1]), axis=1
+                            )
+                        s_last = data.s[pos] - fee * turnover
+                    else:
+                        s_last = data.s[pos] - fee * gross_last
+
+                    if use_pw:
+                        pw_last = data.pw[pos]
+                    else:
+                        pw_last = np.ones(pos.size, dtype=pw_out.dtype)
+
+                    s_out[valid] = s_last
+                    pw_out[valid] = pw_last
+                    gross_out[valid] = gross_last
+                    net_out[valid] = net_last
+
+                parts[key] = pd.DataFrame(
+                    {
+                        's': s_out,
+                        'pw': pw_out,
+                        'gross': gross_out,
+                        'net': net_out,
+                    },
+                    index=out_index,
+                )
+
+            # One alignment/concat per path instead of four separate concat passes.
+            path = pd.concat(parts, axis=1)
+
+            path_s = path.xs('s', level=1, axis=1).fillna(0)
+            raw_pw = path.xs('pw', level=1, axis=1)
+            path_gross = path.xs('gross', level=1, axis=1).fillna(0)
+            path_net = path.xs('net', level=1, axis=1).fillna(0)
+
+            # Vectorized replacement for DataFrame.apply(..., axis=1).
+            non_zero_counts = raw_pw.fillna(0).ne(0).sum(axis=1)
+
+            # Preserve the original behavior: forward-fill only values introduced
+            # by alignment across datasets; missing resample bins were already zero.
+            path_pw = raw_pw.ffill() * multiplier
+            pw_values = path_pw.to_numpy(copy=False)
+
+            # np.nansum matches pandas' row-wise sum(skipna=True) for leading NaNs.
+            path_s_values = np.nansum(
+                path_s.to_numpy(copy=False) * pw_values, axis=1
+            )
+            gross_values = np.nansum(
+                path_gross.to_numpy(copy=False) * pw_values, axis=1
+            )
+            net_values = np.nansum(
+                path_net.to_numpy(copy=False) * pw_values, axis=1
+            )
+
+            paths_s.append(pd.Series(path_s_values, index=path.index, name='s'))
             paths_pw.append(path_pw)
-            paths_net_leverage.append(pd.DataFrame(np.sum(path_w_sum*path_pw, axis = 1), columns=['s']))
-            paths_leverage.append(pd.DataFrame(np.sum(path_w_abs_sum*path_pw, axis = 1), columns=['s']))
-            paths_n_datasets.append(pd.DataFrame(non_zero_counts, columns = ['n']))
-                
-        
-        s = pd.concat(paths_s, axis = 1)
-        w = np.stack([e.values for e in paths_pw], axis = 2)
-        lev = pd.concat(paths_leverage, axis = 1)
-        net_lev = pd.concat(paths_net_leverage, axis = 1)
-        n_datasets = pd.concat(paths_n_datasets, axis = 1)
+            paths_leverage.append(pd.Series(gross_values, index=path.index, name='s'))
+            paths_net_leverage.append(pd.Series(net_values, index=path.index, name='s'))
+            paths_n_datasets.append(pd.Series(non_zero_counts, index=path.index, name='n'))
 
+        s = pd.concat(paths_s, axis=1)
+        lev = pd.concat(paths_leverage, axis=1)
+        net_lev = pd.concat(paths_net_leverage, axis=1)
+        n_datasets = pd.concat(paths_n_datasets, axis=1)
 
-        # filter s
+        # Apply date filtering before constructing the potentially large 3D weight
+        # array used only for visualization.
+        mask = np.ones(len(s), dtype=bool)
         if start_date != '':
-            s = s[s.index>start_date]
-            lev = lev[lev.index>start_date]
-            net_lev = net_lev[net_lev.index>start_date]
-            n_datasets = n_datasets[n_datasets.index>start_date]
+            mask &= s.index > pd.Timestamp(start_date)
+        if end_date != '':
+            mask &= s.index <= pd.Timestamp(end_date)
 
-        out = s.copy(deep = True)
-        out.columns = [f'path_{i+1}' for i in range(len(out.columns))]
+        if not np.all(mask):
+            s = s.loc[mask]
+            lev = lev.loc[mask]
+            net_lev = net_lev.loc[mask]
+            n_datasets = n_datasets.loc[mask]
 
-        ts=s.index
-        s=s.values
+        out = s.copy()
+        out.columns = [f'path_{i+1}' for i in range(out.shape[1])]
 
-        equity_curve(s, ts, color = 'g', pct_fee = pct_fee)
+        ts = s.index
+        s_values = s.to_numpy(copy=False)
 
-        returns_distribution(s, pct_fee = pct_fee, bins = 50)
-        
-        if view_weights: visualize_weights(w, ts, keys)
-        lev.plot(legend = False, title = 'Paths Leverage')
+        equity_curve(s_values, ts, color='g', pct_fee=pct_fee)
+        returns_distribution(s_values, pct_fee=pct_fee, bins=50)
+
+        if view_weights:
+            # Align each path to the final filtered index.  This also fixes the old
+            # start_date mismatch between w and ts.
+            w = np.stack(
+                [pw.reindex(ts).to_numpy(copy=False) for pw in paths_pw],
+                axis=2,
+            )
+            visualize_weights(w, ts, keys)
+
+        lev.plot(legend=False, title='Paths Leverage')
         plt.grid(True)
         plt.show()
-        
-        net_lev.plot(legend = False, title = 'Paths Net Leverage')
+
+        net_lev.plot(legend=False, title='Paths Net Leverage')
         plt.grid(True)
         plt.show()
 
-
-        n_datasets.plot(legend = False, title = 'Number of datasets')
+        n_datasets.plot(legend=False, title='Number of datasets')
         plt.grid(True)
-        plt.show()  
+        plt.show()
 
-        valid_strategy(s, n_boot, sr_mult, alpha = alpha, alpha_n = alpha_n, pct_fee = pct_fee, block_size = block_size)
-
-        performance_summary(s, sr_mult, pct_fee = pct_fee)
-
+        valid_strategy(
+            s_values,
+            n_boot,
+            sr_mult,
+            alpha=alpha,
+            alpha_n=alpha_n,
+            pct_fee=pct_fee,
+            block_size=block_size,
+        )
+        performance_summary(s_values, sr_mult, pct_fee=pct_fee)
 
         return out

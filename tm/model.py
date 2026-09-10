@@ -342,10 +342,12 @@ class ModelSet(dict):
 
             if data.empty: raise Exception('data is empty. should not happen')
             # estimate master model
+            self.model.needed_columns = data.columns
             self.model.estimate_base_model(data)            
 
             # set base models and estimate allocation
             for k, data in dataset.items():
+                self[k].needed_columns = self.model.needed_columns
                 # need to redo here the operations                                
                 self[k].set_base_model(self.model.base_model)
                 # set the global one (even if not estimated yet...)
