@@ -294,13 +294,16 @@ class ModelSet(dict):
             for k, _ in dataset.items(): assert k in covered_keys, "not all elements in dataset assigned to a master_model"
             for elem in self.models_map:
                 apply_to = elem.get('apply_to')
-                model = elem.get('master_model')
+                model = elem.get('model')
+
                 data = None
                 for k, data_ in dataset.items():
                     if k in apply_to:
                         # copy the master model
                         k_model = model.copy()
                         k_model.estimate_transforms(data_)                
+                        k_model.needed_columns = data_.columns
+                                                    
                         # transforms
                         transformed_data_ = k_model.transform(data_)                                
                         if not data: 
@@ -310,19 +313,22 @@ class ModelSet(dict):
                         # add to key
                         self[k] = k_model
 
-                if data.empty: raise Exception('data is empty. should not happen')
-                # estimate master model
-                model.estimate_base_model(data)            
+                if not data.empty: #raise Exception('data is empty. should not happen')
+                    # estimate master model
+                    model.needed_columns = data.columns                
+                    # estimate master model
+                    model.estimate_base_model(data)            
 
-                # set base models and estimate allocation
-                for k, data in dataset.items():
-                    if k in apply_to:
-                        # need to redo here the operations                                
-                        self[k].set_base_model(model.base_model)
-                        # set the global one (even if not estimated yet...)
-                        self[k].set_allocation(model.allocation)
-                        # estimate allocation for each one
-                        self[k].estimate_allocation(self[k].transform(data))
+                    # set base models and estimate allocation
+                    for k, data in dataset.items():
+                        if k in apply_to:
+                            self[k].needed_columns = model.needed_columns
+                            # need to redo here the operations                                
+                            self[k].set_base_model(model.base_model)
+                            # set the global one (even if not estimated yet...)
+                            self[k].set_allocation(model.allocation)
+                            # estimate allocation for each one
+                            self[k].estimate_allocation(self[k].transform(data))
 
         elif self.model:
             # if a master model is present, apply transforms, stack the data, and estimate it
@@ -332,6 +338,7 @@ class ModelSet(dict):
                 k_model = self.model.copy()
                 k_model.estimate_transforms(data_)                
                 # transforms
+                k_model.needed_columns = data_.columns
                 transformed_data_ = k_model.transform(data_)                                
                 if not data: 
                     data = transformed_data_
@@ -340,20 +347,20 @@ class ModelSet(dict):
                 # add to key
                 self[k] = k_model
 
-            if data.empty: raise Exception('data is empty. should not happen')
-            # estimate master model
-            self.model.needed_columns = data.columns
-            self.model.estimate_base_model(data)            
+            if not data.empty: #raise Exception('data is empty. should not happen')
+                # estimate master model
+                self.model.needed_columns = data.columns
+                self.model.estimate_base_model(data)            
 
-            # set base models and estimate allocation
-            for k, data in dataset.items():
-                self[k].needed_columns = self.model.needed_columns
-                # need to redo here the operations                                
-                self[k].set_base_model(self.model.base_model)
-                # set the global one (even if not estimated yet...)
-                self[k].set_allocation(self.model.allocation)
-                # estimate allocation for each one
-                self[k].estimate_allocation(self[k].transform(data))
+                # set base models and estimate allocation
+                for k, data in dataset.items():
+                    self[k].needed_columns = self.model.needed_columns
+                    # need to redo here the operations                                
+                    self[k].set_base_model(self.model.base_model)
+                    # set the global one (even if not estimated yet...)
+                    self[k].set_allocation(self.model.allocation)
+                    # estimate allocation for each one
+                    self[k].estimate_allocation(self[k].transform(data))
 
         else:
             for k, data in dataset.items():
@@ -391,7 +398,8 @@ class ModelSet(dict):
         #n = float(len(self.ws))
         #nk = 0.
         for k, data in dataset.items():
-            assert k in self, "dataset contains a key that is not defined in ModelSet. Exit.."                        
+            # assert k in self, "dataset contains a key that is not defined in ModelSet. Exit.."                        
+
             self[k].evaluate(data)   
             #nk += 1.
         # set portfolio weight on dataset                

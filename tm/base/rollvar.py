@@ -186,6 +186,8 @@ class RollInvVol(BaseModel):
         self.min_points = min_points
         self.use_m2 = False
         self.lag = lag # lag to consider observations only up to self.lag days 
+        self.mu = 0
+        self.scale = 1e8
 
     def view(self, plot = False, **kwargs):
         pass
@@ -195,7 +197,14 @@ class RollInvVol(BaseModel):
         estimate without penalizing with varying variance...
         we can add that but maybe it's too much unjustified complexity        
         '''
-        pass 
+
+        # compute roll variance for y
+        if y.ndim == 2:
+            assert y.shape[1] == 1, "y must contain a single target for a RollVar model"
+            y = y[:, 0]  
+        if y.size > 50:
+            self.mu = np.mean(y)
+
 
     def posterior_predictive(self, y = None, x = None, t = None, z = None, msidx = None, is_live = False, **kwargs):
         '''
@@ -216,7 +225,9 @@ class RollInvVol(BaseModel):
                 print('Data is not enough for live. Return zero weight...')
             # m[:f.size] = 0
             scale[:min(f.size,self.min_points)] = 1
-            return np.ones_like(y), scale
+            
+            # return scale, scale*scale
+            return (self.mu/self.scale)*np.ones_like(y), scale
         else:
             return np.zeros_like(y), np.ones_like(y)
 
