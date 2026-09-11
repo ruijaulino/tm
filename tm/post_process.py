@@ -258,7 +258,7 @@ class Paths(list):
         out.columns = [f'path_{i+1}' for i in range(len(out.columns))]
         return out
 
-    def portfolio_post_process(self, pct_fee = 0., seq_fees = False, sr_mult = np.sqrt(250), n_boot = 1000, block_size = 20, alpha = 0.05, alpha_n = 1000, view_weights = True, use_pw = True, multiplier = 1, start_date = '', end_date = '', resample_to = 'B'):
+    def portfolio_post_process(self, pct_fee = 0., seq_fees = False, sr_mult = np.sqrt(250), n_boot = 1000, block_size = 20, alpha = 0.05, alpha_n = 1000, view_weights = True, use_pw = True, multiplier = 1, normalize_pw = False, start_date = '', end_date = '', resample_to = 'B'):
         """
         Post-process a set of portfolio paths.
 
@@ -380,7 +380,11 @@ class Paths(list):
 
             # Preserve the original behavior: forward-fill only values introduced
             # by alignment across datasets; missing resample bins were already zero.
-            path_pw = raw_pw.ffill() * multiplier
+            raw_pw = raw_pw.ffill()
+            if normalize_pw:
+                raw_pw /= np.sum(np.abs(raw_pw), axis = 1).values[:,None]
+
+            path_pw = raw_pw*multiplier # raw_pw.ffill() * multiplier
             pw_values = path_pw.to_numpy(copy=False)
 
             # np.nansum matches pandas' row-wise sum(skipna=True) for leading NaNs.

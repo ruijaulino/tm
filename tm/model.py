@@ -118,6 +118,7 @@ class Model:
         # apply transforms on whole data (it creates a copy if transformations are applied)
         # this prevents too much copies when iterating over the arrays
         
+        #print('evaluate: ', self.needed_columns, data.columns)
         assert all(e in self.needed_columns for e in data.columns), "data for evaluate does not contain the needed columns"
         data_f = data._get_columns(self.needed_columns) # filter because it may come with more columns in some special cases
 
@@ -181,22 +182,22 @@ class ModelSet(dict):
     def __init__(
                     self, 
                     model:Model = None, 
-                    ensemble_model:EnsembleModel = None, 
-                    models_map:List = None, 
-                    individual_alloc_norm:bool = False, 
+                    models_map:List = None,                      
                     k_clip_quantile = 0.8,
-                    ws_type = 'signed', 
-                    inner_cv_params = {'k_folds':2, 'seq_path':False, 'burn_fraction':0.1, 'min_burn_points':3}
+                    ws_method = 'k', # ['k', 'sr', 'eq'], # k and sharpe have theoretical justification, equal weight for simplicity
+                    ws_signed = True, # ws signed if makes money on inner cv
+                    ws_inner_cv_params = {'k_folds':2, 'seq_path':False, 'burn_fraction':0.1, 'min_burn_points':3}
                     ):
-
+        assert ws_method in ['k', 'sr', 'eq'], "unknown ws_method"
         self.model = model        
-        self.ensemble_model = ensemble_model
-        self.models_map = models_map # [{'model':Model, 'apply_to':[]] - needs to exhaust list in data...
-        self.individual_alloc_norm = individual_alloc_norm
+        self.models_map = models_map 
         self.k_clip_quantile = k_clip_quantile
-        self.ws_type = ws_type
-        assert self.ws_type in ['simple', 'signed', 'equal'], "unknown ws_type"
-        self.inner_cv_params = inner_cv_params
+        self.ws_method = ws_method
+        self.ws_signed = ws_signed
+        if self.ws_method == 'sr' and not self.ws_signed:
+            print('Warning: inner cv will be activated because ws_signed is turned off but needed for ws_method')  
+            self.ws_signed = True      
+        self.ws_inner_cv_params = ws_inner_cv_params
         # after a model is run this variable stores the dataset 
         # that was used to estimate the model!    
 
@@ -218,9 +219,7 @@ class ModelSet(dict):
 
         for k, v in self.ws.items():
             print(k, v)
-        print()
-        if self.ensemble_model:
-            self.ensemble_model.view(plot = plot)
+
         print()
         for k, m in self.items():
             print()
@@ -239,8 +238,8 @@ class ModelSet(dict):
 
     def init_ws(self, dataset:Dataset, modelset:ModelSet, k_folds:int = 2, seq_path:bool = False, burn_fraction:float = 0.1, min_burn_points:int = 3, **kwargs):
 
-        # compute ws as one or zero
-        if self.ws_type=='signed':
+
+        if self.ws_signed:
             dataset_ = cvbt_path(
                         dataset = dataset.copy(), 
                         modelset = modelset.copy(),
@@ -255,7 +254,11 @@ class ModelSet(dict):
             for k, data in dataset_.items():
                 if data.n > 50:
                     keys.append(k)
-                    ws = np.sign(np.mean(data.s))
+                    # ws = np.sign(np.mean(data.s))
+                    if self.ws_method == 'sr':
+                        ws = np.mean(data.s)/np.var(data.s)
+                    else:
+                        ws = np.sign(np.mean(data.s))
                     ws = max(0, ws)
                     w.append(ws)
                 else:
@@ -282,7 +285,7 @@ class ModelSet(dict):
         if self._aux_inner_cv:
             tmp_modelset = self.copy()
             tmp_modelset._aux_inner_cv = False # set to None
-            self.ws = self.init_ws(dataset, tmp_modelset, **self.inner_cv_params)
+            self.ws = self.init_ws(dataset, tmp_modelset, **self.ws_inner_cv_params)
         
         # estimate models
         if self.models_map:
@@ -294,6 +297,7 @@ class ModelSet(dict):
             for k, _ in dataset.items(): assert k in covered_keys, "not all elements in dataset assigned to a master_model"
             for elem in self.models_map:
                 apply_to = elem.get('apply_to')
+                #print('apply_to: ', apply_to)
                 model = elem.get('model')
 
                 data = None
@@ -329,7 +333,8 @@ class ModelSet(dict):
                             self[k].set_allocation(model.allocation)
                             # estimate allocation for each one
                             self[k].estimate_allocation(self[k].transform(data))
-
+                #else:
+                #    print('empty! ', apply_to)
         elif self.model:
             # if a master model is present, apply transforms, stack the data, and estimate it
             data = None
@@ -369,15 +374,16 @@ class ModelSet(dict):
 
         # attribute k to ws
         for k, _ in dataset.items():
-            if self.ws_type != 'equal':
-                if k in self.ws:
-                    self.ws[k] *=self[k].k 
-                else:
-                    self.ws[k] = 0
+            # if self.ws_k:
+            if k in self.ws:
+                if self.ws_method == 'k':
+                    self.ws[k] *= self[k].k 
+            else:
+                self.ws[k] = 0
 
         tmp = np.array(list(self.ws.values()))
         # if not equal weight, clip because of k variation
-        if self.ws_type != 'equal':
+        if self.ws_method in ['k', 'sr']:
             # clipping is needed in order not to have a single strategy with very low vol and returns to dominate...
             quantile = np.quantile(tmp, self.k_clip_quantile, axis = 0, method = 'closest_observation')
             # clip weights
@@ -399,7 +405,7 @@ class ModelSet(dict):
         #nk = 0.
         for k, data in dataset.items():
             # assert k in self, "dataset contains a key that is not defined in ModelSet. Exit.."                        
-
+            #print('evalute for: ', k)
             self[k].evaluate(data)   
             #nk += 1.
         # set portfolio weight on dataset                

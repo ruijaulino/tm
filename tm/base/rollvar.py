@@ -203,7 +203,7 @@ class RollInvVol(BaseModel):
             assert y.shape[1] == 1, "y must contain a single target for a RollVar model"
             y = y[:, 0]  
         if y.size > 50:
-            self.mu = np.mean(y)
+            self.mu = np.abs(np.mean(y))
             self.scale = np.mean(y)
 
 
@@ -229,7 +229,7 @@ class RollInvVol(BaseModel):
             scale[:min(f.size,self.min_points)] = 1
             
             #return 0.01*scale, scale*scale
-            return self.mu*np.ones_like(y), scale*scale
+            return (self.mu)*np.ones_like(y), scale*scale
         else:
             return np.zeros_like(y), np.ones_like(y)
 
