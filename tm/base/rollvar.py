@@ -204,6 +204,8 @@ class RollInvVol(BaseModel):
             y = y[:, 0]  
         if y.size > 50:
             self.mu = np.mean(y)
+            self.scale = np.mean(y)
+
 
 
     def posterior_predictive(self, y = None, x = None, t = None, z = None, msidx = None, is_live = False, **kwargs):
@@ -226,8 +228,8 @@ class RollInvVol(BaseModel):
             # m[:f.size] = 0
             scale[:min(f.size,self.min_points)] = 1
             
-            # return scale, scale*scale
-            return (self.mu/self.scale)*np.ones_like(y), scale
+            #return 0.01*scale, scale*scale
+            return self.mu*np.ones_like(y), scale*scale
         else:
             return np.zeros_like(y), np.ones_like(y)
 
