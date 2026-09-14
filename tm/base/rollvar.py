@@ -227,9 +227,11 @@ class RollInvVol(BaseModel):
                 print('Data is not enough for live. Return zero weight...')
             # m[:f.size] = 0
             scale[:min(f.size,self.min_points)] = 1
+            mu = np.ones_like(y)
+            mu[:min(f.size,self.min_points)] = 0
             
-            #return 0.01*scale, scale*scale
-            return np.ones_like(y), scale
+            # return scale, scale*scale
+            return mu, scale
             #return self.mu*scale/self.scale, scale*scale
         else:
             return np.zeros_like(y), np.ones_like(y)

@@ -50,7 +50,7 @@ class Optimal(Allocation):
         self.k_std = k_std
         self.diagonal = diagonal
         self.demean = demean
-        self.use_M = True
+        self.use_M = use_M
         self.max_w = max_w        
         self.w_mean = None
         self.quantiles = None
@@ -75,10 +75,13 @@ class Optimal(Allocation):
 
         self.k = 1. # make sure it is 1
         if mu.size > 50:
+            
+
             w = self.get_weight(mu, cov, live=False, in_estimate = True)
-            #print(w)
             #plt.hist(w.ravel())
             #plt.show()
+
+            #print(w)
             
             self.quantiles = np.quantile(np.abs(w), self.clip_quantile, axis = 0, method = 'closest_observation')
             # clip weights
@@ -127,7 +130,6 @@ class Optimal(Allocation):
         if self.w_mean:
             w -= self.w_mean
         # w *= self.aux_mult # in case there is insuficient training data
-        
         w /= self.k
 
         #if not in_estimate:

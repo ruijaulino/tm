@@ -360,9 +360,12 @@ class ModelSet(dict):
                     self[k].estimate_allocation(self[k].transform(data))
 
         else:
+            #print('aqui')
             for k, data in dataset.items():
                 assert k in self, "dataset contains a key that is not defined in ModelSet. Exit.."
                 self[k].estimate(data)   
+                #self[k].view()
+                #print(sdfsd)
 
         # attribute k to ws
         for k, _ in dataset.items():
