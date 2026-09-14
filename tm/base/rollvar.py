@@ -229,7 +229,8 @@ class RollInvVol(BaseModel):
             scale[:min(f.size,self.min_points)] = 1
             
             #return 0.01*scale, scale*scale
-            return (self.mu)*np.ones_like(y), scale*scale
+            return np.ones_like(y), scale
+            #return self.mu*scale/self.scale, scale*scale
         else:
             return np.zeros_like(y), np.ones_like(y)
 

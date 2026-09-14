@@ -17,7 +17,6 @@ from tm.constants import *
 # Dict of ModelPipeStack
 # Objective here is to handle for several data in a dataset where
 # each one has a ModelPipeStack associated
-from typing import TYPE_CHECKING
 
 def load_model(filepath):
     with open(filepath, 'rb') as f:

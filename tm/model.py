@@ -16,17 +16,8 @@ from tm.containers import Data, Dataset
 # from tm.workflows import cvbt_path
 from tm.constants import *
 from tm.workflows import cvbt_path
-    
-# there is a circular import
-from typing import TYPE_CHECKING
-if TYPE_CHECKING:
-    from tm.ensemble import EnsembleModel
-# Model class
+    # Model class
 # a model is a set of operations: transform, probabilistic modelling and allocation strategy
-
-
-
-
 
 
 class Model:
@@ -184,19 +175,19 @@ class ModelSet(dict):
                     model:Model = None, 
                     models_map:List = None,                      
                     k_clip_quantile = 0.8,
-                    ws_method = 'k', # ['k', 'sr', 'eq'], # k and sharpe have theoretical justification, equal weight for simplicity
-                    ws_signed = True, # ws signed if makes money on inner cv
+                    sw_method = 'k', # ['k', 'sr', 'eq'], # k and sharpe have theoretical justification, equal weight for simplicity
+                    sw_signed = True, # ws signed if makes money on inner cv
                     ws_inner_cv_params = {'k_folds':2, 'seq_path':False, 'burn_fraction':0.1, 'min_burn_points':3}
                     ):
-        assert ws_method in ['k', 'sr', 'eq'], "unknown ws_method"
+        assert sw_method in ['k', 'sr', 'eq', 'iv', 'g'], "unknown sw_method"
         self.model = model        
         self.models_map = models_map 
         self.k_clip_quantile = k_clip_quantile
-        self.ws_method = ws_method
-        self.ws_signed = ws_signed
-        if self.ws_method == 'sr' and not self.ws_signed:
-            print('Warning: inner cv will be activated because ws_signed is turned off but needed for ws_method')  
-            self.ws_signed = True      
+        self.sw_method = sw_method
+        self.sw_signed = sw_signed
+        if self.sw_method in ['sr', 'iv', 'g'] and not self.sw_signed:
+            print('Warning: inner cv will be activated because sw_signed is turned off but needed for sw_method')  
+            self.sw_signed = True      
         self.ws_inner_cv_params = ws_inner_cv_params
         # after a model is run this variable stores the dataset 
         # that was used to estimate the model!    
@@ -236,10 +227,9 @@ class ModelSet(dict):
         else:
             print(f'Warning: a model was already set for key {key}')
 
-    def init_ws(self, dataset:Dataset, modelset:ModelSet, k_folds:int = 2, seq_path:bool = False, burn_fraction:float = 0.1, min_burn_points:int = 3, **kwargs):
+    def calc_ws(self, dataset:Dataset, modelset:ModelSet, k_folds:int = 2, seq_path:bool = False, burn_fraction:float = 0.1, min_burn_points:int = 3, **kwargs):
 
-
-        if self.ws_signed:
+        if self.sw_signed:
             dataset_ = cvbt_path(
                         dataset = dataset.copy(), 
                         modelset = modelset.copy(),
@@ -255,7 +245,11 @@ class ModelSet(dict):
                 if data.n > 50:
                     keys.append(k)
                     # ws = np.sign(np.mean(data.s))
-                    if self.ws_method == 'sr':
+                    if self.sw_method == 'sr':
+                        ws = np.mean(data.s)/np.std(data.s)
+                    elif self.sw_method == 'iv':
+                        ws = np.sign(np.mean(data.s))/np.std(data.s)
+                    elif self.sw_method == 'g':
                         ws = np.mean(data.s)/np.var(data.s)
                     else:
                         ws = np.sign(np.mean(data.s))
@@ -285,11 +279,10 @@ class ModelSet(dict):
         if self._aux_inner_cv:
             tmp_modelset = self.copy()
             tmp_modelset._aux_inner_cv = False # set to None
-            self.ws = self.init_ws(dataset, tmp_modelset, **self.ws_inner_cv_params)
+            self.ws = self.calc_ws(dataset, tmp_modelset, **self.ws_inner_cv_params)
         
         # estimate models
         if self.models_map:
-
             # check if data keys are covered
             covered_keys = []
             for e in self.models_map: covered_keys += e.get('apply_to', [])
@@ -333,8 +326,7 @@ class ModelSet(dict):
                             self[k].set_allocation(model.allocation)
                             # estimate allocation for each one
                             self[k].estimate_allocation(self[k].transform(data))
-                #else:
-                #    print('empty! ', apply_to)
+
         elif self.model:
             # if a master model is present, apply transforms, stack the data, and estimate it
             data = None
@@ -376,14 +368,14 @@ class ModelSet(dict):
         for k, _ in dataset.items():
             # if self.ws_k:
             if k in self.ws:
-                if self.ws_method == 'k':
+                if self.sw_method == 'k':
                     self.ws[k] *= self[k].k 
             else:
                 self.ws[k] = 0
 
         tmp = np.array(list(self.ws.values()))
         # if not equal weight, clip because of k variation
-        if self.ws_method in ['k', 'sr']:
+        if self.sw_method in ['k', 'sr', 'g', 'iv']:
             # clipping is needed in order not to have a single strategy with very low vol and returns to dominate...
             quantile = np.quantile(tmp, self.k_clip_quantile, axis = 0, method = 'closest_observation')
             # clip weights
@@ -392,8 +384,6 @@ class ModelSet(dict):
         if s!=0:
             tmp /= s
         self.ws = dict(zip(list(self.ws.keys()), tmp))
-
-
         # when we train a final model we can store the dataset that was used to estimate the
         # model. If future checks are needed we can just run inference again with it!
         if store_details:
@@ -404,19 +394,14 @@ class ModelSet(dict):
         #n = float(len(self.ws))
         #nk = 0.
         for k, data in dataset.items():
-            # assert k in self, "dataset contains a key that is not defined in ModelSet. Exit.."                        
-            #print('evalute for: ', k)
             self[k].evaluate(data)   
-            #nk += 1.
         # set portfolio weight on dataset                
-        #if self.ensemble_model:
         for k, data in dataset.items():
             data.pw[:] *= self.ws.get(k, 0)
         return dataset
 
     def live(self, dataset:Dataset):
         # to be used in a live setting
-
         out = {}
         for k, data in dataset.items():
             assert k in self, "dataset contains a key that is not defined in ModelSet. Exit.."                        
@@ -437,99 +422,5 @@ class ModelSet(dict):
             pickle.dump(self, f, pickle.HIGHEST_PROTOCOL)
 
 
-
-
-def test():
-    import tm
-
-
-    n = 1000
-    x = np.random.normal(0, 0.01, n)
-    a = 0
-    b = 0.2
-    y = a+b*x+np.random.normal(0,0.01,n)
-    df1 = pd.DataFrame()
-    df1['x'] = x
-    df1['y'] = y
-    df1.index = pd.date_range('2000-01-01', freq = 'D', periods = n)
-
-    n = 1000
-    x = np.random.normal(0, 0.03, n)
-    a = 0
-    b = 0.2
-    y = a+b*x+np.random.normal(0,0.03,n)
-    df2 = pd.DataFrame()
-    df2['y'] = y
-    df2['x'] = x
-    df2.index = pd.date_range('2002-01-01', freq = 'D', periods = n)
-
-
-    dataset = tm.Dataset()
-    dataset.add('strat1', df1)
-    dataset.add('strat2', df2)
-
-    model_set = ModelSet()
-
-    base_model = tm.base.LinRegr()
-    alloc = tm.allocation.Optimal()
-    model1 = Model(base_model = base_model, allocation = alloc)   
-    model_set.add('strat1', model1)     
-
-
-    base_model = tm.base.LinRegr()
-    alloc = tm.allocation.Optimal()
-    model2 = Model(base_model = base_model, allocation = alloc)   
-    model_set.add('strat2', model2)    
-
-
-    model_set.estimate(dataset) 
-    model_set.view()
-    #out = model_set.evaluate(dataset) 
-    #print(out)
 if __name__ == '__main__':
-
-
-    test()
-    exit(0)
-
-    # generate some data
-    n = 1000
-    x = np.random.normal(0, 0.0028, n)
-    a = 0
-    b = 0.2
-    y = a+b*x+np.random.normal(0,0.0028,n)
-
-    df1 = pd.DataFrame()
-    df1['x'] = x
-    df1['y'] = y
-    df1.index = pd.date_range('2000-01-01', freq = 'D', periods = n)
-    df1.plot.scatter('x', 'y')
-    plt.show()
-
-
-    data = Data.from_df(df1)
-    print(data)
-
-
-    import tm
-    base_model = tm.base.LinRegr()
-    alloc = tm.allocation.Optimal(quantile = 0.95)
-    transforms = tm.transforms.Transforms(
-                            y_transform = tm.transforms.ScaleTransform(),
-                            x_transform = tm.transforms.ScaleTransform()
-                            )
-
-    model = Model(base_model = base_model, allocation = alloc, transforms = transforms)    
-    model.estimate(data)
-    model.view()
-    model.evaluate(data)
-    print('-------')
-    plt.plot(data.w)
-    plt.show()
-
-
     pass
-
-
-
-
