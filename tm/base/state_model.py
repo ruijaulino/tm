@@ -52,7 +52,7 @@ class StateModel(BaseModel):
                 self.states_distribution.update({state: {'m':0, 'v':1}})
             else:
                 idx = z == state
-                if idx.size > self.min_points:
+                if np.count_nonzero(idx) > self.min_points:
                     m = np.sum(y[idx]/var[idx]) / max(np.sum(1/var[idx]), 1e-8)
                     v = np.var(y[idx])
                     self.states_distribution.update({state: {'m':m, 'v':v}})

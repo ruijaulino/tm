@@ -123,11 +123,11 @@ class Optimal(Allocation):
         else:
             w = np.linalg.solve(M, mu[..., None])[..., 0]
             
-        if self.quantiles:
+        if self.quantiles is not None:
             # clip weights
             w = np.clip(w, -self.quantiles, self.quantiles)            
 
-        if self.w_mean:
+        if self.w_mean is not None:
             w -= self.w_mean
         # w *= self.aux_mult # in case there is insuficient training data
         w /= self.k

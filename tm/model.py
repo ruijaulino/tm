@@ -242,8 +242,9 @@ class ModelSet(dict):
             keys = []
             w = []
             for k, data in dataset_.items():
+                keys.append(k)
                 if data.n > 50:
-                    keys.append(k)
+                    
                     # ws = np.sign(np.mean(data.s))
                     if self.sw_method == 'sr':
                         ws = np.mean(data.s)/np.std(data.s)
@@ -412,10 +413,7 @@ class ModelSet(dict):
 
         # set portfolio weight on dataset                
         for k, _ in dataset.items():
-            tmp = 1
-            if self.ensemble_model:
-                tmp = self.ensemble_model.get(k)
-            out[k].update({'pw':tmp})
+            out[k].update({'pw':self.ws.get(k, 1)})
 
         return out
 
