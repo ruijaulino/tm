@@ -144,9 +144,10 @@ class RollVar(BaseModel):
 
         k_f = np.log(1-self.phi_frac_cover)/np.log(self.phi) - 1
         f = (1-self.phi)*np.power(self.phi, np.arange(int(k_f)+1))
-        var = rollvar(y, f) 
-        if var.size < f.size:
-            var = np.ones_like(var)
+        if y.size < f.size:
+            var = np.ones_like(y)
+        else:
+            var = rollvar(y, f) 
 
         self.base_model.estimate(y = y, x = x, t = t, z = z, msidx = msidx, var = var)
 
