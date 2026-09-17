@@ -177,7 +177,7 @@ class ModelSet(dict):
                     self, 
                     model:Model = None, 
                     models_map:List = None,                      
-                    k_clip_quantile = 0.8,
+                    sw_clip_quantile = 0.8,
                     sw_method = 'k', # ['k', 'sr', 'eq'], # k and sharpe have theoretical justification, equal weight for simplicity
                     sw_signed = True, # ws signed if makes money on inner cv
                     inner_cv_params = {'k_folds':2, 'seq_path':False, 'burn_fraction':0.1, 'min_burn_points':3}
@@ -185,7 +185,7 @@ class ModelSet(dict):
         assert sw_method in ['k', 'sr', 'eq', 'iv', 'g'], "unknown sw_method"
         self.model = model        
         self.models_map = models_map 
-        self.k_clip_quantile = k_clip_quantile
+        self.sw_clip_quantile = sw_clip_quantile
         self.sw_method = sw_method
         self.sw_signed = sw_signed
         if self.sw_method in ['sr', 'iv', 'g'] and not self.sw_signed:
@@ -419,7 +419,7 @@ class ModelSet(dict):
         # if not equal weight, clip because of k variation
         #if self.sw_method in ['k', 'sr', 'g', 'iv']:
         # clipping is needed in order not to have a single strategy with very low vol and returns to dominate...
-        quantile = np.quantile(tmp, self.k_clip_quantile, axis = 0, method = 'closest_observation')
+        quantile = np.quantile(tmp, self.sw_clip_quantile, axis = 0, method = 'closest_observation')
         # clip weights
         tmp = np.clip(tmp, -quantile, quantile)        
         s = np.sum(tmp)
