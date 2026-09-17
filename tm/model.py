@@ -39,6 +39,9 @@ class Model:
     def set_k(self, k):
         self.allocation.k = k
 
+    def set_external_multiplier(self, v):
+        self.allocation.set_external_multiplier(v)
+
     @property
     def leverage_scale(self):
         return self.allocation.leverage_scale 
@@ -177,7 +180,7 @@ class ModelSet(dict):
                     k_clip_quantile = 0.8,
                     sw_method = 'k', # ['k', 'sr', 'eq'], # k and sharpe have theoretical justification, equal weight for simplicity
                     sw_signed = True, # ws signed if makes money on inner cv
-                    ws_inner_cv_params = {'k_folds':2, 'seq_path':False, 'burn_fraction':0.1, 'min_burn_points':3}
+                    inner_cv_params = {'k_folds':2, 'seq_path':False, 'burn_fraction':0.1, 'min_burn_points':3}
                     ):
         assert sw_method in ['k', 'sr', 'eq', 'iv', 'g'], "unknown sw_method"
         self.model = model        
@@ -188,13 +191,13 @@ class ModelSet(dict):
         if self.sw_method in ['sr', 'iv', 'g'] and not self.sw_signed:
             print('Warning: inner cv will be activated because sw_signed is turned off but needed for sw_method')  
             self.sw_signed = True      
-        self.ws_inner_cv_params = ws_inner_cv_params
+        self.inner_cv_params = inner_cv_params
         # after a model is run this variable stores the dataset 
         # that was used to estimate the model!    
 
         self.estimation_dataset = None
         self._aux_inner_cv = True
-        self.ws = None
+        self.sw = None
 
     def copy(self):
         return copy.deepcopy(self)
@@ -203,12 +206,11 @@ class ModelSet(dict):
         print()
         print("******* ModelSet *******")
         print()
-        print('Model weights')
-        
-        plt.plot(np.array(list(self.ws.values())))
+        print('Model weights')        
+        plt.plot(np.array(list(self.sw.values())))
         plt.show()
 
-        for k, v in self.ws.items():
+        for k, v in self.sw.items():
             print(k, v)
 
         print()
@@ -227,9 +229,15 @@ class ModelSet(dict):
         else:
             print(f'Warning: a model was already set for key {key}')
 
-    def calc_ws(self, dataset:Dataset, modelset:ModelSet, k_folds:int = 2, seq_path:bool = False, burn_fraction:float = 0.1, min_burn_points:int = 3, **kwargs):
+    def calc_oos_stats(self, dataset:Dataset, modelset:ModelSet, k_folds:int = 2, seq_path:bool = False, burn_fraction:float = 0.1, min_burn_points:int = 3, **kwargs):
+        
+        MIN_POINTS_OOS = 50
+        out = dict(zip(dataset.keys(), [{'mean':1, 'std':1, 'var':1, 'n':1}]*len(dataset.keys())))
 
         if self.sw_signed:
+
+            # compute strategies OOS
+            modelset._aux_inner_cv = False # set to None
             dataset_ = cvbt_path(
                         dataset = dataset.copy(), 
                         modelset = modelset.copy(),
@@ -238,49 +246,72 @@ class ModelSet(dict):
                         start_fold = 0, 
                         burn_fraction = burn_fraction, 
                         min_burn_points = min_burn_points
-                        )
-            keys = []
-            w = []
+                        )     
+            # to simplify output
+            # not taking into account correlations (to much complication, not feasible for some dataset)
+            out = {}
             for k, data in dataset_.items():
-                keys.append(k)
-                if data.n > 50:
-                    
-                    # ws = np.sign(np.mean(data.s))
-                    if self.sw_method == 'sr':
-                        ws = np.mean(data.s)/np.std(data.s)
-                    elif self.sw_method == 'iv':
-                        ws = np.sign(np.mean(data.s))/np.std(data.s)
-                    elif self.sw_method == 'g':
-                        ws = np.mean(data.s)/np.var(data.s)
-                    else:
-                        ws = np.sign(np.mean(data.s))
-                    ws = max(0, ws)
-                    w.append(ws)
+                if data.n > MIN_POINTS_OOS:
+                    out[k] = {'mean':np.mean(data.s), 'std':np.std(data.s), 'var':np.var(data.s), 'n':data.n}
                 else:
-                    w.append(0)
-            w = np.array(w)
-            return dict(zip(keys, w))    
-        else:
-            keys = []
-            w = []
-            for k, data in dataset.items():
-                w.append(1)
-                keys.append(k)
-            w = np.array(w)
-            w = np.ones_like(w, dtype = np.float64)
-            return dict(zip(keys, w))  
+                    out[k] = {'mean':0, 'std':1, 'var':1, 'n':data.n}
+        return out
+
+
+        # if self.sw_signed:
+        #     dataset_ = cvbt_path(
+        #                 dataset = dataset.copy(), 
+        #                 modelset = modelset.copy(),
+        #                 k_folds = k_folds, 
+        #                 seq_path = seq_path, 
+        #                 start_fold = 0, 
+        #                 burn_fraction = burn_fraction, 
+        #                 min_burn_points = min_burn_points
+        #                 )
+        #     keys = []
+        #     w = []
+        #     for k, data in dataset_.items():
+        #         keys.append(k)
+        #         if data.n > 50:                    
+        #             if self.sw_method == 'sr':
+        #                 ws = np.mean(data.s)/np.std(data.s)
+        #             elif self.sw_method == 'iv':
+        #                 ws = np.sign(np.mean(data.s))/np.std(data.s)
+        #             elif self.sw_method == 'g':
+        #                 ws = np.mean(data.s)/np.var(data.s)
+        #             else:
+        #                 ws = np.sign(np.mean(data.s))
+        #             ws = max(0, ws)
+        #             w.append(ws)
+        #         else:
+        #             w.append(0)
+        #     w = np.array(w)
+        #     return dict(zip(keys, w))    
+        # else:
+        #     keys = []
+        #     w = []
+        #     for k, data in dataset.items():
+        #         w.append(1)
+        #         keys.append(k)
+        #     w = np.array(w)
+        #     w = np.ones_like(w, dtype = np.float64)
+        #     return dict(zip(keys, w))  
 
     def estimate(self, dataset:Dataset, store_details:bool = True):                
         
         assert isinstance(dataset, Dataset), "ModelSet can only be used with a Dataset object"
-
         
         # estimate ensemble_model, may do nestec cv here
-        self.ws = {}
+        # self.sw = {}
+
+        # initialize
+        self.sw = dict(zip(dataset.keys(), np.ones(len(dataset.keys()), dtype = np.float64)))
+        
+        oos_stats = dict(zip(dataset.keys(), [{'mean':1, 'std':1, 'var':1, 'n':1}]*len(dataset.keys())))
         if self._aux_inner_cv:
             tmp_modelset = self.copy()
             tmp_modelset._aux_inner_cv = False # set to None
-            self.ws = self.calc_ws(dataset, tmp_modelset, **self.ws_inner_cv_params)
+            oos_stats = self.calc_oos_stats(dataset, tmp_modelset, **self.inner_cv_params)
         
         # estimate models
         if self.models_map:
@@ -365,29 +396,37 @@ class ModelSet(dict):
             for k, data in dataset.items():
                 assert k in self, "dataset contains a key that is not defined in ModelSet. Exit.."
                 self[k].estimate(data)   
-                #self[k].view()
-                #print(sdfsd)
 
-        # attribute k to ws
+        # compute strategy weights
         for k, _ in dataset.items():
-            # if self.ws_k:
-            if k in self.ws:
+            if k in oos_stats:                
+                # adjust sign
+                if self.sw_signed:
+                    self.sw[k] *= max(np.sign(oos_stats[k]['mean']),0)
+                # compute pw from oos statistics
                 if self.sw_method == 'k':
-                    self.ws[k] *= self[k].k 
+                    self.sw[k] *= self[k].k
+                elif self.sw_method == 'sr':
+                    self.sw[k] = max(oos_stats[k]['mean'],0)/(oos_stats[k]['std']+1e-8)
+                elif self.sw_method == 'iv':
+                    self.sw[k] /= (oos_stats[k]['std']+1e-8)
+                elif self.sw_method == 'g':
+                    ws = max(oos_stats[k]['mean'],0)/(oos_stats[k]['var']+1e-8)
             else:
-                self.ws[k] = 0
-
-        tmp = np.array(list(self.ws.values()))
+                self.sw[k] = 0
+        # clip, normalize
+        tmp = np.array(list(self.sw.values()))
         # if not equal weight, clip because of k variation
-        if self.sw_method in ['k', 'sr', 'g', 'iv']:
-            # clipping is needed in order not to have a single strategy with very low vol and returns to dominate...
-            quantile = np.quantile(tmp, self.k_clip_quantile, axis = 0, method = 'closest_observation')
-            # clip weights
-            tmp = np.clip(tmp, -quantile, quantile)        
+        #if self.sw_method in ['k', 'sr', 'g', 'iv']:
+        # clipping is needed in order not to have a single strategy with very low vol and returns to dominate...
+        quantile = np.quantile(tmp, self.k_clip_quantile, axis = 0, method = 'closest_observation')
+        # clip weights
+        tmp = np.clip(tmp, -quantile, quantile)        
         s = np.sum(tmp)
         if s!=0:
             tmp /= s
-        self.ws = dict(zip(list(self.ws.keys()), tmp))
+        self.sw = dict(zip(list(self.sw.keys()), tmp))
+          
         # when we train a final model we can store the dataset that was used to estimate the
         # model. If future checks are needed we can just run inference again with it!
         if store_details:
@@ -395,13 +434,13 @@ class ModelSet(dict):
 
     def evaluate(self, dataset:Dataset):
         # dataset_dict is a dict of dataset
-        #n = float(len(self.ws))
+        #n = float(len(self.sw))
         #nk = 0.
         for k, data in dataset.items():
             self[k].evaluate(data)   
         # set portfolio weight on dataset                
         for k, data in dataset.items():
-            data.pw[:] *= self.ws.get(k, 0)
+            data.sw[:] *= self.sw.get(k, 0)
         return dataset
 
     def live(self, dataset:Dataset):
@@ -413,7 +452,7 @@ class ModelSet(dict):
 
         # set portfolio weight on dataset                
         for k, _ in dataset.items():
-            out[k].update({'pw':self.ws.get(k, 1)})
+            out[k].update({'sw':self.sw.get(k, 1)})
 
         return out
 

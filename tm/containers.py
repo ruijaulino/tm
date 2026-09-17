@@ -35,7 +35,7 @@ def contiguous_prefix_slices(columns: np.ndarray) -> Dict[str, slice]:
 class Data:
     def __init__(self, 
                  ts, y, s=None, x=None, z=None, t=None,
-                 msidx=None, pw=None, w=None,
+                 msidx=None, sw=None, w=None,
                  y_cols=np.array([]), x_cols=None, t_cols=None, w_cols=None, z_cols=None):
         
         self.ts = ts
@@ -44,7 +44,7 @@ class Data:
         self.z = z
         self.t = t
         self.s = np.zeros(len(ts)) if s is None else s
-        self.pw = np.ones(len(ts)) if pw is None else pw
+        self.sw = np.ones(len(ts)) if sw is None else sw
         self.w = np.zeros((y.shape[0], y.shape[1])) if w is None else w
         self.msidx = np.zeros(len(ts), dtype=int) if msidx is None else msidx
         
@@ -146,7 +146,7 @@ class Data:
         add_field(self.t, self.t_cols)
         add_field(self.msidx, [MSIDX])
         add_field(self.s, [S])
-        add_field(self.pw, [PW])
+        add_field(self.sw, [SW])
         add_field(self.w, self.w_cols)
 
         return pd.DataFrame(np.hstack(v), columns=c, index=self.index())
@@ -235,7 +235,7 @@ class Data:
             x=self.x[idx] if self.x is not None else None,
             z=self.z[idx] if self.z is not None else None,
             t=self.t[idx] if self.t is not None else None,
-            s=self.s[idx], pw=self.pw[idx], w=self.w[idx],
+            s=self.s[idx], sw=self.sw[idx], w=self.w[idx],
             msidx=self.msidx[idx],
             y_cols=self.y_cols, x_cols=self.x_cols,
             t_cols=self.t_cols, w_cols=self.w_cols, z_cols = self.z_cols)
@@ -292,7 +292,7 @@ class Data:
             self.z = np.vstack((self.z, data.z))# np.hstack((self.z, data.z))
 
         self.s = np.hstack((self.s, data.s))
-        self.pw = np.hstack((self.pw, data.pw))
+        self.sw = np.hstack((self.sw, data.sw))
         self.w = np.vstack((self.w, data.w))
 
         offset = self.msidx[-1] - data.msidx[0] + 1

@@ -258,19 +258,19 @@ class Paths(list):
         out.columns = [f'path_{i+1}' for i in range(len(out.columns))]
         return out
 
-    def portfolio_post_process(self, pct_fee = 0., seq_fees = False, sr_mult = np.sqrt(250), n_boot = 1000, block_size = 20, alpha = 0.05, alpha_n = 1000, view_weights = True, use_pw = True, multiplier = 1, normalize_pw = False, start_date = '', end_date = '', resample_to = 'B'):
+    def portfolio_post_process(self, pct_fee = 0., seq_fees = False, sr_mult = np.sqrt(250), n_boot = 1000, block_size = 20, alpha = 0.05, alpha_n = 1000, view_weights = True, use_sw = True, multiplier = 1, normalize_sw = False, start_date = '', end_date = '', resample_to = 'B'):
         """
         Post-process a set of portfolio paths.
 
         The expensive part of the original implementation was repeatedly building and
-        resampling pandas objects for s, pw and the full weight matrix.  Here we
+        resampling pandas objects for s, sw and the full weight matrix.  Here we
         resample only an integer row-position Series, then use those positions to
         index the NumPy arrays directly.  This keeps the exact pandas resampling bins
         while avoiding conversion/resampling of the n x p weight matrix.
 
         Notes
         -----
-        The fast resampling path assumes s, pw and w contain finite values.  This is
+        The fast resampling path assumes s, sw and w contain finite values.  This is
         the normal output of the backtest pipeline.  If NaNs are intentionally stored
         inside these arrays, pandas ``resample(...).last()`` has column-wise NaN
         semantics that are not identical to selecting the last physical row.
@@ -285,7 +285,7 @@ class Paths(list):
             pct_fee = {k: pct_fee for k in keys}
 
         paths_s = []
-        paths_pw = []
+        paths_sw = []
         paths_leverage = []
         paths_net_leverage = []
         paths_n_datasets = []
@@ -317,7 +317,7 @@ class Paths(list):
 
                 m = len(out_index)
                 s_out = np.zeros(m, dtype=np.result_type(data.s, np.float64))
-                pw_out = np.zeros(m, dtype=np.result_type(data.pw, np.float64))
+                sw_out = np.zeros(m, dtype=np.result_type(data.sw, np.float64))
                 gross_out = np.zeros(m, dtype=np.float64)
                 net_out = np.zeros(m, dtype=np.float64)
 
@@ -347,20 +347,20 @@ class Paths(list):
                     else:
                         s_last = data.s[pos] - fee * gross_last
 
-                    if use_pw:
-                        pw_last = data.pw[pos]
+                    if use_sw:
+                        sw_last = data.sw[pos]
                     else:
-                        pw_last = np.ones(pos.size, dtype=pw_out.dtype)
+                        sw_last = np.ones(pos.size, dtype=sw_out.dtype)
 
                     s_out[valid] = s_last
-                    pw_out[valid] = pw_last
+                    sw_out[valid] = sw_last
                     gross_out[valid] = gross_last
                     net_out[valid] = net_last
 
                 parts[key] = pd.DataFrame(
                     {
                         's': s_out,
-                        'pw': pw_out,
+                        'sw': sw_out,
                         'gross': gross_out,
                         'net': net_out,
                     },
@@ -371,35 +371,35 @@ class Paths(list):
             path = pd.concat(parts, axis=1)
 
             path_s = path.xs('s', level=1, axis=1).fillna(0)
-            raw_pw = path.xs('pw', level=1, axis=1)
+            raw_sw = path.xs('sw', level=1, axis=1)
             path_gross = path.xs('gross', level=1, axis=1).fillna(0)
             path_net = path.xs('net', level=1, axis=1).fillna(0)
 
             # Vectorized replacement for DataFrame.apply(..., axis=1).
-            non_zero_counts = raw_pw.fillna(0).ne(0).sum(axis=1)
+            non_zero_counts = raw_sw.fillna(0).ne(0).sum(axis=1)
 
             # Preserve the original behavior: forward-fill only values introduced
             # by alignment across datasets; missing resample bins were already zero.
-            raw_pw = raw_pw.ffill()
-            if normalize_pw:
-                raw_pw /= np.sum(np.abs(raw_pw), axis = 1).values[:,None]
+            raw_sw = raw_sw.ffill()
+            if normalize_sw:
+                raw_sw /= np.sum(np.abs(raw_sw), axis = 1).values[:,None]
 
-            path_pw = raw_pw*multiplier # raw_pw.ffill() * multiplier
-            pw_values = path_pw.to_numpy(copy=False)
+            path_sw = raw_sw*multiplier # raw_sw.ffill() * multiplier
+            sw_values = path_sw.to_numpy(copy=False)
 
             # np.nansum matches pandas' row-wise sum(skipna=True) for leading NaNs.
             path_s_values = np.nansum(
-                path_s.to_numpy(copy=False) * pw_values, axis=1
+                path_s.to_numpy(copy=False) * sw_values, axis=1
             )
             gross_values = np.nansum(
-                path_gross.to_numpy(copy=False) * pw_values, axis=1
+                path_gross.to_numpy(copy=False) * sw_values, axis=1
             )
             net_values = np.nansum(
-                path_net.to_numpy(copy=False) * pw_values, axis=1
+                path_net.to_numpy(copy=False) * sw_values, axis=1
             )
 
             paths_s.append(pd.Series(path_s_values, index=path.index, name='s'))
-            paths_pw.append(path_pw)
+            paths_sw.append(path_sw)
             paths_leverage.append(pd.Series(gross_values, index=path.index, name='s'))
             paths_net_leverage.append(pd.Series(net_values, index=path.index, name='s'))
             paths_n_datasets.append(pd.Series(non_zero_counts, index=path.index, name='n'))
@@ -436,7 +436,7 @@ class Paths(list):
             # Align each path to the final filtered index.  This also fixes the old
             # start_date mismatch between w and ts.
             w = np.stack(
-                [pw.reindex(ts).to_numpy(copy=False) for pw in paths_pw],
+                [sw.reindex(ts).to_numpy(copy=False) for sw in paths_sw],
                 axis=2,
             )
             visualize_weights(w, ts, keys)
@@ -465,3 +465,17 @@ class Paths(list):
         performance_summary(s_values, sr_mult, pct_fee=pct_fee)
 
         return out
+
+
+def strategy_assembly(data, k_folds = 4, method = 'iv'):
+    '''
+    data: dict like {'strat1':pd.DataFrame, 'strat2':pd.DataFrame}
+        Each dataframe is the output of the post process that may contain several paths, one is selected at random 
+
+    '''
+    assert isintance(data, dict), "data must be a dict of dataframes"
+    assert method in ['iv', 'g'], "unknown method"
+    
+
+
+

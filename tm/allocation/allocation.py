@@ -55,8 +55,10 @@ class Optimal(Allocation):
         self.w_mean = None
         self.quantiles = None
         self.k = 1
+        self.external_multiplier = 1
         self.leverage_scale = 1
         self.aux_mult = 1
+
 
     def set_use_M(self, use_M = True):
         self.use_M = use_M
@@ -64,6 +66,7 @@ class Optimal(Allocation):
     def view(self):
         print('k: ', self.k)
         print('Weight mean: ', self.w_mean)
+        print('external multiplier: ', self.external_multiplier)
         print('leverage scale: ', self.leverage_scale)
 
     def estimate(self, mu, cov, **kwargs):                
@@ -131,6 +134,7 @@ class Optimal(Allocation):
             w -= self.w_mean
         # w *= self.aux_mult # in case there is insuficient training data
         w /= self.k
+
 
         #if not in_estimate:
         #    # need to clip again because master k
