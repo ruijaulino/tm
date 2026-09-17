@@ -411,7 +411,7 @@ class ModelSet(dict):
                 elif self.sw_method == 'iv':
                     self.sw[k] /= (oos_stats[k]['std']+1e-8)
                 elif self.sw_method == 'g':
-                    ws = max(oos_stats[k]['mean'],0)/(oos_stats[k]['var']+1e-8)
+                    self.sw[k] = max(oos_stats[k]['mean'],0)/(oos_stats[k]['var']+1e-8)
             else:
                 self.sw[k] = 0
         # clip, normalize

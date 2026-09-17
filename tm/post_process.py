@@ -5,8 +5,6 @@ import matplotlib.pyplot as plt
 from typing import List, Union, Dict
 from tm.containers import Data, Dataset
 from tm.constants import *
-
-
 def calculate_fees(s, weights, seq_fees, pct_fee):
     '''
     s: numpy (n,k) array with several return sequences
@@ -254,19 +252,28 @@ class Paths(list):
 
         performance_summary(s,sr_mult,pct_fee=pct_fee)
 
-        out = pd.DataFrame(s, index = ts)
-        out.columns = [f'path_{i+1}' for i in range(len(out.columns))]
-        return out
+        
+        lev = np.sum(np.abs(w), axis = 1)
+
+        s = pd.DataFrame(s, index = ts)
+        s.columns = [f'path_{i+1}' for i in range(len(s.columns))]
+        lev = pd.DataFrame(lev, index = ts)
+        lev.columns = [f'path_{i+1}' for i in range(len(lev.columns))]        
+        
+
+        return {'strategy':s, 'lev':lev}
 
     def portfolio_post_process(self, pct_fee = 0., seq_fees = False, sr_mult = np.sqrt(250), n_boot = 1000, block_size = 20, alpha = 0.05, alpha_n = 1000, view_weights = True, use_sw = True, multiplier = 1, normalize_sw = False, start_date = '', end_date = '', resample_to = 'B'):
         """
         Post-process a set of portfolio paths.
 
-        The expensive part of the original implementation was repeatedly building and
-        resampling pandas objects for s, sw and the full weight matrix.  Here we
-        resample only an integer row-position Series, then use those positions to
-        index the NumPy arrays directly.  This keeps the exact pandas resampling bins
-        while avoiding conversion/resampling of the n x p weight matrix.
+        Cache timestamp conversion, resampling positions and alignment maps across
+        paths. Combine returns and leverage with NumPy, constructing pandas
+        objects only for the final outputs and optional weight visualization.
+        The cache is local to this call; differing path timestamps are supported.
+        Sorted integer Unix-second timestamps use a NumPy fast path for 'B'
+        resampling. Other frequencies and timestamp layouts use pandas.
+        Contiguous row selections use array views instead of advanced-index copies.
 
         Notes
         -----
@@ -290,119 +297,164 @@ class Paths(list):
         paths_net_leverage = []
         paths_n_datasets = []
 
-        for dataset in self:
-            parts = {}
+        # Cache the most recent timestamp layout for each dataset key. Usually
+        # every path uses the same timestamps, so pandas resamples once per key.
+        layout_cache = {}
+        previous_layouts = None
+        alignment = None
 
+        def row_selector(positions):
+            # Basic slicing returns a view; integer-array indexing makes a copy.
+            if positions.size and np.all(positions[1:] == positions[:-1] + 1):
+                return slice(int(positions[0]), int(positions[-1]) + 1)
+            return positions
+
+        for dataset in self:
+            layouts = []
             for key in keys:
                 data = dataset[key]
-                w = data.w
-                n = data.n
-
-                # Use pandas only to determine the output bins and the last source
-                # row in each bin.  This is much cheaper than resampling w itself.
-                index = pd.to_datetime(data.ts, unit='s')
-                if resample_to is None:
-                    out_index = index
-                    valid = np.ones(n, dtype=bool)
-                    pos = np.arange(n, dtype=np.intp)
-                else:
-                    pos_s = pd.Series(
-                        np.arange(n, dtype=np.int64),
-                        index=index,
-                        copy=False,
-                    ).resample(resample_to).last()
-                    out_index = pos_s.index
-                    valid = pos_s.notna().to_numpy()
-                    pos = pos_s[valid].to_numpy(dtype=np.intp, copy=False)
-
-                m = len(out_index)
-                s_out = np.zeros(m, dtype=np.result_type(data.s, np.float64))
-                sw_out = np.zeros(m, dtype=np.result_type(data.sw, np.float64))
-                gross_out = np.zeros(m, dtype=np.float64)
-                net_out = np.zeros(m, dtype=np.float64)
-
-                if pos.size:
-                    w_last = w[pos]
-                    gross_last = np.sum(np.abs(w_last), axis=1)
-                    net_last = np.sum(w_last, axis=1)
-
-                    fee = pct_fee.get(key, 0)
-                    if np.ndim(fee) != 0:
-                        raise ValueError('pct_fee values must be scalars')
-
-                    if fee == 0:
-                        s_last = data.s[pos]
-                    elif seq_fees:
-                        # calculate_fees() is applied before resampling in the old
-                        # implementation.  Therefore turnover at a retained row t is
-                        # |w[t] - w[t-1]|, not the change from the previous retained row.
-                        turnover = np.zeros(pos.size, dtype=np.float64)
-                        has_prev = pos > 0
-                        if np.any(has_prev):
-                            p = pos[has_prev]
-                            turnover[has_prev] = np.sum(
-                                np.abs(w[p] - w[p - 1]), axis=1
-                            )
-                        s_last = data.s[pos] - fee * turnover
+                source_ts = np.asarray(data.ts)
+                cached = layout_cache.get(key)
+                if cached is None or not np.array_equal(source_ts, cached[0]):
+                    if (
+                        resample_to == 'B'
+                        and source_ts.size
+                        and np.issubdtype(source_ts.dtype, np.integer)
+                        and np.all(source_ts[1:] >= source_ts[:-1])
+                    ):
+                        # Default pandas BusinessDay bins are left-closed:
+                        # Friday includes Saturday/Sunday. Consecutive business
+                        # dates have consecutive codes, including before 1970.
+                        days = (source_ts // 86400).astype(np.int64)
+                        weeks, weekdays = np.divmod(days + 3, 7)
+                        codes = weeks * 5 + np.minimum(weekdays, 4)
+                        pos = np.r_[np.flatnonzero(codes[1:] != codes[:-1]),
+                                    source_ts.size - 1].astype(np.intp)
+                        valid_rows = (codes[pos] - codes[0]).astype(np.intp)
+                        output_codes = np.arange(codes[0], codes[-1] + 1)
+                        weeks, weekdays = np.divmod(output_codes, 5)
+                        output_days = weeks * 7 + weekdays - 3
+                        out_index = pd.DatetimeIndex(
+                            output_days.astype('datetime64[D]').astype('datetime64[ns]'),
+                            freq='B',
+                        )
+                    elif resample_to is None:
+                        index = pd.to_datetime(source_ts, unit='s')
+                        out_index = index
+                        valid_rows = np.arange(data.n, dtype=np.intp)
+                        pos = valid_rows
                     else:
-                        s_last = data.s[pos] - fee * gross_last
+                        index = pd.to_datetime(source_ts, unit='s')
+                        positions = pd.Series(
+                            np.arange(data.n, dtype=np.int64),
+                            index=index, copy=False,
+                        ).resample(resample_to).last()
+                        out_index = positions.index
+                        valid_rows = np.flatnonzero(positions.notna().to_numpy())
+                        pos = positions.iloc[valid_rows].to_numpy(dtype=np.intp)
+                    cached = (source_ts, out_index, valid_rows, pos)
+                    layout_cache[key] = cached
+                layouts.append(cached)
 
-                    if use_sw:
-                        sw_last = data.sw[pos]
-                    else:
-                        sw_last = np.ones(pos.size, dtype=sw_out.dtype)
+            # Reuse the union and integer alignment maps when timestamps match.
+            if previous_layouts is None or any(
+                new is not old for new, old in zip(layouts, previous_layouts)
+            ):
+                path_index = layouts[0][1]
+                same_index = all(path_index.equals(layout[1]) for layout in layouts[1:])
+                if not same_index:
+                    for layout in layouts[1:]:
+                        path_index = path_index.union(layout[1])
+                    path_index = path_index.sort_values()
+                alignment = []
+                for _, out_index, valid_rows, pos in layouts:
+                    all_rows = (
+                        np.arange(len(path_index), dtype=np.intp)
+                        if same_index else path_index.get_indexer(out_index)
+                    )
+                    rows = all_rows[valid_rows]
+                    has_prev = pos > 0
+                    previous_pos = pos[has_prev]
+                    alignment.append((
+                        row_selector(all_rows), row_selector(rows), pos,
+                        row_selector(pos), has_prev,
+                        row_selector(previous_pos), row_selector(previous_pos - 1),
+                    ))
+                previous_layouts = layouts
 
-                    s_out[valid] = s_last
-                    sw_out[valid] = sw_last
-                    gross_out[valid] = gross_last
-                    net_out[valid] = net_last
+            m = len(path_index)
+            sw_values = np.full((m, len(keys)), np.nan, dtype=np.float64)
+            for j, key in enumerate(keys):
+                all_rows, rows, pos, source_rows, _, _, _ = alignment[j]
+                # Empty resample bins are zero. Alignment gaps remain NaN.
+                sw_values[all_rows, j] = 0.0
+                sw_values[rows, j] = dataset[key].sw[source_rows] if use_sw else 1.0
 
-                parts[key] = pd.DataFrame(
-                    {
-                        's': s_out,
-                        'sw': sw_out,
-                        'gross': gross_out,
-                        'net': net_out,
-                    },
-                    index=out_index,
-                )
+            non_zero_counts = np.sum(
+                (~np.isnan(sw_values)) & (sw_values != 0), axis=1
+            )
 
-            # One alignment/concat per path instead of four separate concat passes.
-            path = pd.concat(parts, axis=1)
+            # Forward-fill each column without an additional n x k index array.
+            # Leading NaNs remain NaN, exactly as in DataFrame.ffill().
+            row_numbers = np.arange(m, dtype=np.intp)
+            for j in range(len(keys)):
+                column = sw_values[:, j]
+                missing = np.isnan(column)
+                if missing.any():
+                    last = np.maximum.accumulate(
+                        np.where(missing, -1, row_numbers)
+                    )
+                    fill = missing & (last >= 0)
+                    column[fill] = column[last[fill]]
 
-            path_s = path.xs('s', level=1, axis=1).fillna(0)
-            raw_sw = path.xs('sw', level=1, axis=1)
-            path_gross = path.xs('gross', level=1, axis=1).fillna(0)
-            path_net = path.xs('net', level=1, axis=1).fillna(0)
-
-            # Vectorized replacement for DataFrame.apply(..., axis=1).
-            non_zero_counts = raw_sw.fillna(0).ne(0).sum(axis=1)
-
-            # Preserve the original behavior: forward-fill only values introduced
-            # by alignment across datasets; missing resample bins were already zero.
-            raw_sw = raw_sw.ffill()
             if normalize_sw:
-                raw_sw /= np.sum(np.abs(raw_sw), axis = 1).values[:,None]
+                totals = np.nansum(np.abs(sw_values), axis=1)
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    sw_values /= totals[:, None]
+            sw_values *= multiplier
 
-            path_sw = raw_sw*multiplier # raw_sw.ffill() * multiplier
-            sw_values = path_sw.to_numpy(copy=False)
+            # Stream each dataset into the portfolio totals. No aligned return,
+            # gross-leverage or net-leverage DataFrames/matrices are required.
+            values = np.zeros((m, 3), dtype=np.float64)
+            for j, key in enumerate(keys):
+                _, rows, pos, source_rows, has_prev, current_rows, previous_rows = alignment[j]
+                if not pos.size:
+                    continue
+                data = dataset[key]
+                w = data.w
+                w_last = w[source_rows]
+                gross_last = np.sum(np.abs(w_last), axis=1)
+                net_last = np.sum(w_last, axis=1)
 
-            # np.nansum matches pandas' row-wise sum(skipna=True) for leading NaNs.
-            path_s_values = np.nansum(
-                path_s.to_numpy(copy=False) * sw_values, axis=1
-            )
-            gross_values = np.nansum(
-                path_gross.to_numpy(copy=False) * sw_values, axis=1
-            )
-            net_values = np.nansum(
-                path_net.to_numpy(copy=False) * sw_values, axis=1
-            )
+                fee = pct_fee.get(key, 0)
+                if np.ndim(fee) != 0:
+                    raise ValueError('pct_fee values must be scalars')
+                if fee == 0:
+                    s_last = data.s[source_rows]
+                elif seq_fees:
+                    # Turnover uses the previous SOURCE row, not the previous
+                    # resampled row. This preserves fees-before-resampling.
+                    turnover = np.zeros(pos.size, dtype=np.float64)
+                    turnover[has_prev] = np.sum(
+                        np.abs(w[current_rows] - w[previous_rows]), axis=1
+                    )
+                    s_last = data.s[source_rows] - fee * turnover
+                else:
+                    s_last = data.s[source_rows] - fee * gross_last
 
-            paths_s.append(pd.Series(path_s_values, index=path.index, name='s'))
-            paths_sw.append(path_sw)
-            paths_leverage.append(pd.Series(gross_values, index=path.index, name='s'))
-            paths_net_leverage.append(pd.Series(net_values, index=path.index, name='s'))
-            paths_n_datasets.append(pd.Series(non_zero_counts, index=path.index, name='n'))
+                contribution = np.column_stack((s_last, gross_last, net_last)).astype(
+                    np.float64, copy=False
+                )
+                contribution *= sw_values[rows, j, None]
+                contribution[np.isnan(contribution)] = 0.0
+                values[rows] += contribution
+
+            paths_s.append(pd.Series(values[:, 0], index=path_index, name='s'))
+            paths_leverage.append(pd.Series(values[:, 1], index=path_index, name='s'))
+            paths_net_leverage.append(pd.Series(values[:, 2], index=path_index, name='s'))
+            paths_n_datasets.append(pd.Series(non_zero_counts, index=path_index, name='n'))
+            if view_weights:
+                paths_sw.append(pd.DataFrame(sw_values, index=path_index, columns=keys))
 
         s = pd.concat(paths_s, axis=1)
         lev = pd.concat(paths_leverage, axis=1)
@@ -423,8 +475,7 @@ class Paths(list):
             net_lev = net_lev.loc[mask]
             n_datasets = n_datasets.loc[mask]
 
-        out = s.copy()
-        out.columns = [f'path_{i+1}' for i in range(out.shape[1])]
+
 
         ts = s.index
         s_values = s.to_numpy(copy=False)
@@ -464,18 +515,322 @@ class Paths(list):
         )
         performance_summary(s_values, sr_mult, pct_fee=pct_fee)
 
-        return out
+
+        s.columns = [f'path_{i+1}' for i in range(s.shape[1])]
+        lev.columns = [f'path_{i+1}' for i in range(lev.shape[1])]
 
 
-def strategy_assembly(data, k_folds = 4, method = 'iv'):
-    '''
-    data: dict like {'strat1':pd.DataFrame, 'strat2':pd.DataFrame}
-        Each dataframe is the output of the post process that may contain several paths, one is selected at random 
+        return {'strategy':s, 'lev':lev}
 
-    '''
-    assert isintance(data, dict), "data must be a dict of dataframes"
-    assert method in ['iv', 'g'], "unknown method"
+def base_strategy_assembly(
+    data, method='iv', n_paths=3, k_folds=4, multiplier = 1,
+    seed=None
+):
+    """
+    Parameters
+    ----------
+    data : dict
+        {
+            'strat1': {'strategy': returns_df, 'lev': leverage_df},
+            ...
+        }
+
+        Returns and leverage are matched by timestamp and column label.
+        Returns are assumed to already reflect strategy leverage.
+
+    return_leverage : bool
+        If True, append assembled leverage to the returned outputs.
+
+    Returns
+    -------
+    assembled, weights, available_counts
+    optionally followed by assembled_leverage.
+
+    Notes
+    -----
+    Weights are normalized once per fold. Missing strategy returns
+    receive zero allocation without redistributing their weight.
+
+    Portfolio leverage is the weighted sum of strategy leverages,
+    before any netting of underlying positions.
+    """
+    if not isinstance(data, dict) or not data:
+        raise ValueError("data must be a nonempty dictionary")
+    if method not in ('iv', 'g'):
+        raise ValueError("unknown method")
+    if not isinstance(n_paths, int) or n_paths < 1:
+        raise ValueError("n_paths must be a positive integer")
+
+    names = list(data)
+    frames = []
+    leverage_frames = []
+
+    for name, item in data.items():
+        if not isinstance(item, dict) or not {'strategy', 'lev'} <= item.keys():
+            raise ValueError(f"{name}: expected 'strategy' and 'lev'")
+
+        s, lev = item['strategy'], item['lev']
+
+        for label, df in [('strategy', s), ('lev', lev)]:
+            if not isinstance(df, pd.DataFrame) or df.shape[1] == 0:
+                raise ValueError(f"{name}/{label}: expected a dataframe with columns")
+            if not df.index.is_unique or not df.columns.is_unique:
+                raise ValueError(f"{name}/{label}: index and columns must be unique")
+
+        if not s.columns.isin(lev.columns).all():
+            raise ValueError(f"{name}: leverage must contain every strategy column")
+
+        frames.append(s)
+        leverage_frames.append(lev)
+
+    # Union of return timestamps.
+    index = frames[0].index
+    for df in frames[1:]:
+        index = index.union(df.index)
+    index = index.sort_values()
+
+    n = len(index)
+    n_strategies = len(names)
+
+    if not isinstance(k_folds, int) or not 2 <= k_folds <= n:
+        raise ValueError("k_folds must be between 2 and the number of timestamps")
+
+    arrays = [
+        s.reindex(index).to_numpy(dtype=float)
+        for s in frames
+    ]
+    leverage_arrays = [
+        lev.reindex(index=index, columns=s.columns).to_numpy(dtype=float)
+        for s, lev in zip(frames, leverage_frames)
+    ]
+
+    if any(np.isinf(a).any() for a in arrays + leverage_arrays):
+        raise ValueError("returns and leverage may contain NaN, but not infinity")
+    if any(np.any(a < 0) for a in leverage_arrays):
+        raise ValueError("gross leverage must be nonnegative")
+
+    folds = np.array_split(np.arange(n), k_folds)
+    rng = np.random.default_rng(seed)
+
+    result = np.zeros((n, n_paths))
+    counts = np.zeros((n, n_paths), dtype=int)
+    weight_history = np.zeros((n, n_paths, n_strategies))
+    leverage_history = np.zeros((n, n_paths))
+
+    for path in range(n_paths):
+        # Match the selected return path to its leverage path.
+        selected = [rng.integers(a.shape[1]) for a in arrays]
+
+        returns = np.column_stack([
+            a[:, col] for a, col in zip(arrays, selected)
+        ])
+        leverage = np.column_stack([
+            a[:, col] for a, col in zip(leverage_arrays, selected)
+        ])
+
+        available = ~np.isnan(returns)
+        counts[:, path] = available.sum(axis=1)
+
+        for test_idx in folds:
+            train_mask = np.ones(n, dtype=bool)
+            train_mask[test_idx] = False
+
+            train = pd.DataFrame(returns[train_mask])
+            variance = train.var(ddof=1).to_numpy()
+
+            if method == 'iv':
+                numerator = np.ones(n_strategies)
+                denominator = np.sqrt(variance)
+            else:
+                numerator = np.maximum(train.mean().to_numpy(), 0.0)
+                denominator = variance
+
+            valid = (
+                np.isfinite(numerator)
+                & np.isfinite(denominator)
+                & (denominator > 0)
+            )
+
+            fold_weights = np.divide(
+                numerator,
+                denominator,
+                out=np.zeros(n_strategies),
+                where=valid,
+            )
+
+            total = fold_weights.sum()
+            if total > 0:
+                fold_weights /= total
+
+            # No renormalization when a strategy is unavailable.
+            row_weights = available[test_idx] * fold_weights
+            row_weights *= multiplier
+            weight_history[test_idx, path, :] = row_weights
+
+            test_returns = np.nan_to_num(returns[test_idx], nan=0.0)
+            result[test_idx, path] = np.sum(
+                row_weights * test_returns, axis=1
+            )
+
+            # Missing leverage matters only for nonzero allocations.
+            test_leverage = leverage[test_idx]
+            contributions = np.zeros_like(test_leverage)
+            np.multiply(
+                row_weights,
+                test_leverage,
+                out=contributions,
+                where=row_weights > 0,
+            )
+            leverage_history[test_idx, path] = contributions.sum(axis=1)
+
+    columns = [f'path{i + 1}' for i in range(n_paths)]
+
+    assembled = pd.DataFrame(result, index=index, columns=columns)
+
+    weights = pd.DataFrame(
+        weight_history.reshape(n, n_paths * n_strategies),
+        index=index,
+        columns=pd.MultiIndex.from_product(
+            [columns, names],
+            names=['path', 'strategy'],
+        ),
+    )
+
+    available_counts = pd.DataFrame(counts, index=index, columns=columns)
+
+    assembled_leverage = pd.DataFrame(
+        leverage_history, index=index, columns=columns
+    )
+    return assembled, weights, available_counts, assembled_leverage
+
+
+def plot_strategy_assembly(
+    assembled, weights, counts, leverage, compound=False,
+):
+    # 1. Cumulative returns
+    cumulative = (
+        (1 + assembled).cumprod() - 1
+        if compound else assembled.cumsum()
+    )
+
+    fig_returns, ax = plt.subplots(
+        figsize=(12, 5), constrained_layout=True
+    )
+    cumulative.plot(ax=ax)
+    ax.set_title('Cumulative returns')
+    ax.set_ylabel(
+        'Compounded return' if compound else 'Cumulative return (sum)'
+    )
+    ax.axhline(0, color='black', linewidth=0.7)
+    ax.grid(alpha=0.25)
+
+    # 2. Weights: all strategies and paths on one axis
+    paths = assembled.columns
+    strategies = weights.columns.get_level_values('strategy').unique()
+    cmap = plt.get_cmap('tab20', len(strategies))
+    line_styles = ['-', '--', ':', '-.']
+
+    fig_weights, ax = plt.subplots(
+        figsize=(12, 5), constrained_layout=True
+    )
+
+    for j, path in enumerate(paths):
+        for i, strategy in enumerate(strategies):
+            ax.plot(
+                weights.index,
+                weights[(path, strategy)],
+                color=cmap(i),
+                linestyle=line_styles[j % len(line_styles)],
+                linewidth=1.3,
+                label=f'{strategy} — {path}',
+            )
+
+    ax.set_title('Strategy weights')
+    ax.set_ylabel('Allocation')
+    ax.set_ylim(0, 1)
+    ax.grid(alpha=0.25)
+    ax.legend(
+        loc='upper left', bbox_to_anchor=(1.02, 1), frameon=False
+    )
+
+    # 3. Number of available strategies
+    fig_counts, ax = plt.subplots(
+        figsize=(12, 4), constrained_layout=True
+    )
+    counts.plot(ax=ax, drawstyle='steps-post')
+    ax.set_title('Available strategies')
+    ax.set_ylabel('Count')
+    ax.set_yticks(np.arange(len(strategies) + 1))
+    ax.set_ylim(-0.1, len(strategies) + 0.1)
+    ax.grid(alpha=0.25)
+
+    # 4. Portfolio leverage: already multiplied by strategy weights
+    fig_leverage, ax = plt.subplots(
+        figsize=(12, 5), constrained_layout=True
+    )
+
+    # Matplotlib preserves gaps where leverage is unknown (NaN).
+    for path in paths:
+        ax.plot(leverage.index, leverage[path], label=path)
+
+    ax.set_title('Portfolio leverage')
+    ax.set_ylabel('Leverage')
+    ax.set_ylim(bottom=0)
+    ax.grid(alpha=0.25)
+    ax.legend()
+    
+    plt.show()    
     
 
 
+
+def strategy_assembly(
+    data, method='iv', n_paths=3, k_folds=4, sr_mul = np.sqrt(260), multiplier = 1,
+    seed=None):
+
+    """
+    Parameters
+    ----------
+    data : dict
+        {
+            'strat1': {'strategy': returns_df, 'lev': leverage_df},
+            ...
+        }
+
+        Returns and leverage are matched by timestamp and column label.
+        Returns are assumed to already reflect strategy leverage.
+
+    return_leverage : bool
+        If True, append assembled leverage to the returned outputs.
+
+    Returns
+    -------
+    assembled, weights, available_counts
+    optionally followed by assembled_leverage.
+
+    Notes
+    -----
+    Weights are normalized once per fold. Missing strategy returns
+    receive zero allocation without redistributing their weight.
+
+    Portfolio leverage is the weighted sum of strategy leverages,
+    before any netting of underlying positions.
+    """
+    assembled, weights, counts, leverage = base_strategy_assembly(data = data, method=method, n_paths=n_paths, k_folds=k_folds, multiplier = multiplier, seed = seed)
+
+    print('** STATISTICS **')
+    v = assembled.values
+    print('-> Annual return: ', np.mean(np.mean(v, axis = 0))*sr_mul*sr_mul )
+    print('-> Annual scale: ', np.mean(np.std(v, axis = 0))*sr_mul )
+    print('-> Annual sharpe: ', np.mean(np.mean(v, axis = 0)/np.std(v, axis = 0))*sr_mul )
+    print('-> Weights')
+    print(weights.mean(axis=0).unstack('strategy').mean(axis=0))
+
+
+
+
+    plot_strategy_assembly(
+        assembled, weights, counts, leverage
+    )
+    return {'assembled':assembled, 'weights':weights, 'counts':counts, 'leverage':leverage}
 
