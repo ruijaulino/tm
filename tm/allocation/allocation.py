@@ -136,9 +136,9 @@ class Optimal(Allocation):
         w /= self.k
 
 
-        #if not in_estimate:
-        #    # need to clip again because master k
-        #    w = np.clip(w, -self.max_w, self.max_w)            
+        if not in_estimate:
+            # need to clip again because master k
+            w = np.clip(w, -1, 1)            
 
         if not live:
             return w   
