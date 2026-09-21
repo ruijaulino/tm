@@ -153,7 +153,7 @@ class Model:
         assert (transformed_data.y[-1] == Y_LIVE_VALUE).all(), f"In a live setting, the last observation of y must have been generated artificially with {Y_LIVE_VALUE}"    
         if use_t:
             transformed_data.t[-1] = data_f.t[-1] # restore value        
-            assert (t[-1] == T_LIVE_VALUE).all(), f"In a live setting, the last observation of t must have been generated artificially with {T_LIVE_VALUE}"    
+            assert (transformed_data.t[-1] == T_LIVE_VALUE).all(), f"In a live setting, the last observation of t must have been generated artificially with {T_LIVE_VALUE}"    
         # it does not matter that we are making more computations than needed here because it
         # is a fast operation done only once when execution live
         mu, cov = self.base_model.posterior_predictive(**transformed_data.as_dict(is_live = True))

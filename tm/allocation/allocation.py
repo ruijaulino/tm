@@ -45,7 +45,7 @@ def soft(m, v, c, b):
 
 
 class Optimal(Allocation):
-    def __init__(self, clip_quantile=0.95, k_std = 3, diagonal=False, use_M=False, max_w = 1, demean=False):
+    def __init__(self, clip_quantile=0.95, k_std = 3, diagonal=False, use_M=False, max_w = 1., demean=False):
         self.clip_quantile = clip_quantile
         self.k_std = k_std
         self.diagonal = diagonal
@@ -138,7 +138,7 @@ class Optimal(Allocation):
 
         if not in_estimate:
             # need to clip again because master k
-            w = np.clip(w, -1, 1)            
+            w = np.clip(w, -self.max_w, self.max_w)            
 
         if not live:
             return w   
