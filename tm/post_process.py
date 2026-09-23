@@ -443,6 +443,13 @@ class Paths(list):
     # add post process methods
     def post_process(self, pct_fee = 0., seq_fees = False, sr_mult = np.sqrt(250), n_boot = 1000, block_size = 20, alpha = 0.05, alpha_n = 1000, key = None, start_date = '', end_date = '', simple_view = False):
 
+        """Analyze observations with start_date < timestamp <= end_date.
+
+        Empty strings or None leave the corresponding bound open. Fees are
+        computed on the full history before filtering, preserving turnover at
+        the first selected observation. All plots, statistics and returned
+        tables use the selected period. Bounds are exact timestamps.
+        """
         if len(self) == 0:
             print('No paths to process!')
             return
@@ -468,12 +475,30 @@ class Paths(list):
             print('No results to process!')
             return
         
-        ts = dataset[key].index()
+        ts = pd.DatetimeIndex(self[0][key].index())
+        if any(not pd.DatetimeIndex(item[key].index()).equals(ts) for item in self):
+            raise ValueError('all paths must have matching timestamps')
+        if ts.hasnans or not ts.is_monotonic_increasing:
+            raise ValueError('timestamps must be sorted and contain no NaT')
+        mask = np.ones(len(ts), dtype=bool)
+        lower = None if start_date is None or start_date == '' else pd.Timestamp(start_date)
+        upper = None if end_date is None or end_date == '' else pd.Timestamp(end_date)
+        if (lower is not None and pd.isna(lower)) or (upper is not None and pd.isna(upper)):
+            raise ValueError('date bounds must not be NaT')
+        if lower is not None and upper is not None and lower > upper:
+            raise ValueError('start_date must not be after end_date')
+        if lower is not None:
+            mask &= ts > lower
+        if upper is not None:
+            mask &= ts <= upper
+        if not mask.any():
+            raise ValueError('no observations within the requested date range')
 
         # stack arrays
         s = np.hstack(s)
         w = np.stack(w, axis = 2)
         s = calculate_fees(s, w, seq_fees, pct_fee)
+        s, w, ts = s[mask], w[mask], ts[mask]
 
         # post processing        
         equity_curve(s, ts, color = 'g', pct_fee = pct_fee)    

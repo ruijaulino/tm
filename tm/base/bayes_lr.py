@@ -1,13 +1,20 @@
 import numpy as np
-import matplotlib.pyplot as plt
-from tm.base import BaseModel
-import tm
 import warnings
 
 class BayesianLinearRegression:
+    """Bayesian regression with optional per-feature quantile clipping.
+
+    clip_quantiles=None preserves the original behavior. A pair such as
+    (0.01, 0.99) clips all features to their training quantiles, before
+    centering and scaling. Quantiles are unweighted, computed along axis 0
+    using NumPy's default linear interpolation. Targets are never clipped.
+    The fitted clip_lower_ and clip_upper_ bounds are reused for both
+    prediction methods and recomputed on every fit. Input arrays are not
+    modified. Avoid clipping binary indicators or other categorical features.
+    """
     def __init__(self, intercept=True, prior='ridge', n_iter=1000,
                  tol=1e-6, rho=0.5, standardize=True,
-                 precision_bounds=(1e-12, 1e12)):
+                 precision_bounds=(1e-12, 1e12), clip_quantiles=None):
         if prior not in ('ols', 'ridge', 'ard'):
             raise ValueError("prior must be 'ols', 'ridge', or 'ard'")
         if not isinstance(n_iter, (int, np.integer)) or n_iter < 1:
@@ -22,7 +29,22 @@ class BayesianLinearRegression:
         self.intercept, self.standardize = bool(intercept), bool(standardize)
         self.prior, self.n_iter, self.tol, self.rho = prior, n_iter, tol, rho
         self.precision_bounds = (lo, hi)
+        self.clip_quantiles = self._validate_clip_quantiles(clip_quantiles)
+        self.clip_lower_ = self.clip_upper_ = None
         self.w = self.S = self.a = self.b = None
+
+    @staticmethod
+    def _validate_clip_quantiles(quantiles):
+        if quantiles is None:
+            return None
+        try:
+            quantiles = np.asarray(quantiles, dtype=float)
+        except (TypeError, ValueError) as exc:
+            raise ValueError('clip_quantiles must be None or a pair with 0 <= lower < upper <= 1') from exc
+        if (quantiles.shape != (2,) or not np.isfinite(quantiles).all()
+                or not 0 <= quantiles[0] < quantiles[1] <= 1):
+            raise ValueError('clip_quantiles must be None or a pair with 0 <= lower < upper <= 1')
+        return tuple(float(q) for q in quantiles)
 
     @staticmethod
     def _matrix(x):
@@ -75,6 +97,11 @@ class BayesianLinearRegression:
         n_eff = n - int(self.intercept)
         if n_eff <= 0:
             raise ValueError('Not enough observations to estimate noise')
+        quantiles = self._validate_clip_quantiles(self.clip_quantiles)
+        clip_lower = clip_upper = None
+        if quantiles is not None:
+            clip_lower, clip_upper = np.quantile(X, quantiles, axis=0)
+            X = np.clip(X, clip_lower, clip_upper)
         q = 1.0 / v
         qsum = q.sum()
         mx = (q @ X) / qsum if self.intercept else np.zeros(p)
@@ -172,6 +199,7 @@ class BayesianLinearRegression:
                 Ss = F.T @ F
                 gamma_total = float(np.clip(1 - a * diagS, 0, 1).sum())
 
+        self.clip_lower_, self.clip_upper_ = clip_lower, clip_upper
         self.n_features_in_ = p
         self.x_mean_, self.x_scale_, self.y_mean_ = mx, scale, my
         self.coef_ = ws / scale
@@ -202,6 +230,8 @@ class BayesianLinearRegression:
         x = self._matrix(x)
         if x.shape[1] != self.n_features_in_:
             raise ValueError('x has a different number of features than training data')
+        if self.clip_lower_ is not None:
+            x = np.clip(x, self.clip_lower_, self.clip_upper_)
         return x
 
     def predict(self, x, **kwargs):
