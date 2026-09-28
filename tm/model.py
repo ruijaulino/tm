@@ -31,6 +31,7 @@ class Model:
         if hasattr(self.base_model, 'use_M'):
             self.allocation.set_use_M(use_M = self.base_model.use_M)
         self.needed_columns = None
+        self._is_estimated = False
 
     @property
     def k(self):
@@ -93,15 +94,17 @@ class Model:
 
     def estimate(self, data:Data):        
         
-        # store data columns to check and filter on evaluation and live
-        self.needed_columns = data.columns
-        # estimate transforms
-        self.estimate_transforms(data)
-        # apply to training data
-        transformed_data = self.transform(data)        
-        # the arguments passed are like model.estimate(y, x, z, t, msidx) 
-        self.estimate_base_model(transformed_data)
-        self.estimate_allocation(transformed_data)
+        if not data.empty:
+            # store data columns to check and filter on evaluation and live
+            self.needed_columns = data.columns
+            # estimate transforms
+            self.estimate_transforms(data)
+            # apply to training data
+            transformed_data = self.transform(data)        
+            # the arguments passed are like model.estimate(y, x, z, t, msidx) 
+            self.estimate_base_model(transformed_data)
+            self.estimate_allocation(transformed_data)
+            self._is_estimated = True
 
     def evaluate(self, data:Data):
         """Evaluate the model using the test data and return performance metrics."""
@@ -113,26 +116,27 @@ class Model:
         # this prevents too much copies when iterating over the arrays
         
         #print('evaluate: ', self.needed_columns, data.columns)
-        assert all(e in self.needed_columns for e in data.columns), "data for evaluate does not contain the needed columns"
-        data_f = data._get_columns(self.needed_columns) # filter because it may come with more columns in some special cases
+        if self._is_estimated:
+            assert all(e in self.needed_columns for e in data.columns), "data for evaluate does not contain the needed columns"
+            data_f = data._get_columns(self.needed_columns) # filter because it may come with more columns in some special cases
 
-        if not data_f.empty:
-            transformed_data = self.transform(data_f)
+            if not data_f.empty:
+                transformed_data = self.transform(data_f)
 
-            # compute the posterior predictive on data
-            # this will generate arrays mu and cov that correspond to each point in data.y
-            mu, cov = self.base_model.posterior_predictive(**transformed_data.as_dict())      
-            if mu.ndim == 1:
-                mu = mu.reshape((mu.size, 1))
-            if cov.ndim == 1:
-                cov = cov.reshape((cov.size, 1, 1))
-            # transform back into appropriate scale
-            mu, cov = self.transforms.scale_back_moments(mu, cov)
-            w = self.allocation.get_weight(mu, cov)        
-            # set on original data!
-            data.w[:] = w
-            data.s[:] = np.einsum('ij,ij->i', w, data.y)
-        
+                # compute the posterior predictive on data
+                # this will generate arrays mu and cov that correspond to each point in data.y
+                mu, cov = self.base_model.posterior_predictive(**transformed_data.as_dict())      
+                if mu.ndim == 1:
+                    mu = mu.reshape((mu.size, 1))
+                if cov.ndim == 1:
+                    cov = cov.reshape((cov.size, 1, 1))
+                # transform back into appropriate scale
+                mu, cov = self.transforms.scale_back_moments(mu, cov)
+                w = self.allocation.get_weight(mu, cov)        
+                # set on original data!
+                data.w[:] = w
+                data.s[:] = np.einsum('ij,ij->i', w, data.y)
+            
         return data
 
 
