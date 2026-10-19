@@ -32,13 +32,14 @@ class LinRegr(BaseModel):
         assert x.ndim == 2, "x must be a matrix with the features!"
         assert y.size == x.shape[0], "y and x must have the same number of observations"
         n = y.size
-        if self.intercept:
-            x = np.hstack((np.ones((n, 1)), x))        
-        x = winsorize(x, limits=[self.winsorize_quantile, self.winsorize_quantile], axis = 0)
-        x = np.array(x)
-        Q, R = np.linalg.qr(x)
-        self.w = np.linalg.solve(R, Q.T @ y)
-        self.v = np.var(y - x @ self.w)
+        if n>50:
+            if self.intercept:
+                x = np.hstack((np.ones((n, 1)), x))        
+            x = winsorize(x, limits=[self.winsorize_quantile, self.winsorize_quantile], axis = 0)
+            x = np.array(x)
+            Q, R = np.linalg.qr(x)
+            self.w = np.linalg.solve(R, Q.T @ y)
+            self.v = np.var(y - x @ self.w)
 
     def posterior_predictive(self, x, **kwargs):
         '''
@@ -46,11 +47,13 @@ class LinRegr(BaseModel):
         '''            
         assert x.ndim == 2, "x must be a matrix with the features!"
         n = x.shape[0]
-        if self.intercept:
-            x = np.hstack((np.ones((n, 1)), x))
-        m = x @ self.w        
-        return m, self.v*np.ones_like(m)
-
+        if self.w is not None:
+            if self.intercept:
+                x = np.hstack((np.ones((n, 1)), x))
+            m = x @ self.w        
+            return m, self.v*np.ones_like(m)
+        else:
+            return np.zeros(n, dtype = np.float64), self.v*np.ones_like(m, dtype = np.float64)
 
 def dev():
     

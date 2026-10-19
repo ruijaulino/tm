@@ -13,15 +13,12 @@ from tm.base import BaseModel
 from tm.allocation import Allocation, Optimal
 from tm.transforms.abstract import Transforms
 from tm.containers import Data, Dataset
+# from tm.workflows import cvbt_path
 from tm.constants import *
-
-# there is a circular import
-from typing import TYPE_CHECKING
-if TYPE_CHECKING:
-    from tm.ensemble import EnsembleModel
-
-# Model class
+from tm.workflows import cvbt_path
+    # Model class
 # a model is a set of operations: transform, probabilistic modelling and allocation strategy
+
 
 class Model:
 
@@ -31,10 +28,25 @@ class Model:
         if not self.transforms: self.transforms = Transforms()
         self.allocation = allocation
         if not self.allocation: self.allocation = Optimal()
-        if hasattr(self.base_model, 'use_m2'):
-            self.allocation.set_use_m2(use_m2 = self.base_model.use_m2)
+        if hasattr(self.base_model, 'use_M'):
+            self.allocation.set_use_M(use_M = self.base_model.use_M)
         self.needed_columns = None
+        self._is_estimated = False
 
+    @property
+    def k(self):
+        return self.allocation.k
+
+    def set_k(self, k):
+        self.allocation.k = k
+
+    def set_external_multiplier(self, v):
+        self.allocation.set_external_multiplier(v)
+
+    @property
+    def leverage_scale(self):
+        return self.allocation.leverage_scale 
+    
     def copy(self):
         return copy.deepcopy(self)
 
@@ -47,16 +59,15 @@ class Model:
     def set_allocation(self, allocation:Allocation):
         self.allocation = copy.deepcopy(allocation)
 
-    def view(self, plot = False, transforms_only = False, **kwargs):
-        if transforms_only:
-                self.transforms.view()
-        else:
-            print("* Model *")
-            self.base_model.view(plot = plot)
-            print()
-            self.transforms.view()
-            print()
-            self.allocation.view()
+    def view(self, plot = False, **kwargs):
+        print()
+        print()
+        print("* Model *")
+        self.base_model.view(plot = plot)
+        print()
+        self.transforms.view()
+        print() 
+        self.allocation.view()
         print()
         print()
 
@@ -70,31 +81,30 @@ class Model:
         self.base_model.estimate(**data.as_dict())
         
     def estimate_allocation(self, data:Data):
-        # get predictive distribution on training data
+        # get predictive distribution on training data to get a measure of weight variation
         mu, cov = self.base_model.posterior_predictive(**data.as_dict())
+        # transform back into appropriate scale
         if mu.ndim == 1:
             mu = mu.reshape((mu.size, 1))
         if cov.ndim == 1:
             cov = cov.reshape((cov.size, 1, 1))
+        # put back in the original scale
+        mu, cov = self.transforms.scale_back_moments(mu, cov)
         self.allocation.estimate(mu, cov)  
 
     def estimate(self, data:Data):        
         
-        # store data columns to check and filter on evaluation and live
-        self.needed_columns = data.columns
-
-        # estimate transforms
-        self.estimate_transforms(data)
-        # apply to training data
-        transformed_data = self.transform(data)        
-        # the arguments passed are like model.estimate(y, x, z, t, msidx) 
-        self.estimate_base_model(transformed_data)
-        self.estimate_allocation(transformed_data)
-
-
-    def post_estimate(self, data:Data):
-        # adjust parameters after master is estimated!
-        pass
+        if not data.empty:
+            # store data columns to check and filter on evaluation and live
+            self.needed_columns = data.columns
+            # estimate transforms
+            self.estimate_transforms(data)
+            # apply to training data
+            transformed_data = self.transform(data)        
+            # the arguments passed are like model.estimate(y, x, z, t, msidx) 
+            self.estimate_base_model(transformed_data)
+            self.estimate_allocation(transformed_data)
+            self._is_estimated = True
 
     def evaluate(self, data:Data):
         """Evaluate the model using the test data and return performance metrics."""
@@ -105,27 +115,33 @@ class Model:
         # apply transforms on whole data (it creates a copy if transformations are applied)
         # this prevents too much copies when iterating over the arrays
         
-        assert all(e in self.needed_columns for e in data.columns), "data for evaluate does not contain the needed columns"
-        data_f = data._get_columns(self.needed_columns) # filter because it may come with more columns in some special cases
+        #print('evaluate: ', self.needed_columns, data.columns)
+        if self._is_estimated:
+            assert all(e in self.needed_columns for e in data.columns), "data for evaluate does not contain the needed columns"
+            data_f = data._get_columns(self.needed_columns) # filter because it may come with more columns in some special cases
 
-        if not data_f.empty:
-            transformed_data = self.transform(data_f)
+            if not data_f.empty:
+                transformed_data = self.transform(data_f)
 
-            # compute the posterior predictive on data
-            # this will generate arrays mu and cov that correspond to each point in data.y
-            mu, cov = self.base_model.posterior_predictive(**transformed_data.as_dict())        
-            if mu.ndim == 1:
-                mu = mu.reshape((mu.size, 1))
-            if cov.ndim == 1:
-                cov = cov.reshape((cov.size, 1, 1))
-            w = self.allocation.get_weight(mu, cov, cost_scale = self.transforms.cost_scale())        
-            # set on original data!
-            data.w[:] = w
-            data.s[:] = np.einsum('ij,ij->i', w, data.y)
-        
+                # compute the posterior predictive on data
+                # this will generate arrays mu and cov that correspond to each point in data.y
+                mu, cov = self.base_model.posterior_predictive(**transformed_data.as_dict())      
+                if mu.ndim == 1:
+                    mu = mu.reshape((mu.size, 1))
+                if cov.ndim == 1:
+                    cov = cov.reshape((cov.size, 1, 1))
+                # transform back into appropriate scale
+                mu, cov = self.transforms.scale_back_moments(mu, cov)
+                w = self.allocation.get_weight(mu, cov)        
+                # set on original data!
+                data.w[:] = w
+                data.s[:] = np.einsum('ij,ij->i', w, data.y)
+            
         return data
 
-    def live(self, data:Data, prev_w = None, **kwargs):
+
+    # this should be removed...
+    def live(self, data:Data, **kwargs):
         # live is implemented on it's own although it performs
         # similar computations as in evaluate
         # note that data must be provided in a defined way for live evaluation
@@ -141,7 +157,7 @@ class Model:
         assert (transformed_data.y[-1] == Y_LIVE_VALUE).all(), f"In a live setting, the last observation of y must have been generated artificially with {Y_LIVE_VALUE}"    
         if use_t:
             transformed_data.t[-1] = data_f.t[-1] # restore value        
-            assert (t[-1] == T_LIVE_VALUE).all(), f"In a live setting, the last observation of t must have been generated artificially with {T_LIVE_VALUE}"    
+            assert (transformed_data.t[-1] == T_LIVE_VALUE).all(), f"In a live setting, the last observation of t must have been generated artificially with {T_LIVE_VALUE}"    
         # it does not matter that we are making more computations than needed here because it
         # is a fast operation done only once when execution live
         mu, cov = self.base_model.posterior_predictive(**transformed_data.as_dict(is_live = True))
@@ -149,7 +165,9 @@ class Model:
             mu = mu.reshape((mu.size, 1))
         if cov.ndim == 1:
             cov = cov.reshape((cov.size, 1, 1))        
-        w = self.allocation.get_weight(mu, cov, cost_scale = self.transforms.cost_scale(), live = True, prev_w = prev_w)        
+        # transform back into appropriate scale
+        mu, cov = self.transforms.scale_back_moments(mu, cov)
+        w = self.allocation.get_weight(mu, cov, live=True)  
         return np.atleast_1d(w)
         
     def save(self, filepath):
@@ -157,41 +175,33 @@ class Model:
             pickle.dump(self, f, pickle.HIGHEST_PROTOCOL)
 
 
-# support several models applied to a dataset with appropriate mixing
-class ModelList(list):
-    def __init__(self):
-        pass
-
-    def view(self, plot = False, **kwargs):
-        pass
-
-    def add(self, model:Model):
-        pass
-
-    def estimate(self, data:Data):
-        pass
-
-    def evaluate(self, data:Data):
-        pass
-
-    def live(self, data:Data, prev_w = None, **kwargs):
-        pass
-
-    def save(self, filepath):
-        with open(filepath, 'wb') as f:
-            pickle.dump(self, f, pickle.HIGHEST_PROTOCOL)
-
-
-
+# change the name later...
 class ModelSet(dict):
-    def __init__(self, master_model:Model = None, ensemble_model:EnsembleModel = None, master_models_map:List = None, individual_alloc_norm:bool = False):
-        self.master_model = master_model        
-        self.ensemble_model = ensemble_model
-        self.master_models_map = master_models_map # [{'master_model':Model, 'apply_to':[], 'columns':['y1', 'x1','x2','z1']}] - needs to exhaust list in data...
-        self.individual_alloc_norm = individual_alloc_norm
+    def __init__(
+                    self, 
+                    model:Model = None, 
+                    models_map:List = None,                      
+                    sw_clip_quantile = 0.8,
+                    sw_method = 'k', # ['k', 'sr', 'eq'], # k and sharpe have theoretical justification, equal weight for simplicity
+                    sw_signed = True, # ws signed if makes money on inner cv
+                    inner_cv_params = {'k_folds':2, 'seq_path':False, 'burn_fraction':0.1, 'min_burn_points':3}
+                    ):
+        assert sw_method in ['k', 'sr', 'eq', 'iv', 'g'], "unknown sw_method"
+        self.model = model        
+        self.models_map = models_map 
+        self.sw_clip_quantile = sw_clip_quantile
+        self.sw_method = sw_method
+        self.sw_signed = sw_signed
+        if self.sw_method in ['sr', 'iv', 'g'] and not self.sw_signed:
+            print('Warning: inner cv will be activated because sw_signed is turned off but needed for sw_method')  
+            self.sw_signed = True      
+        self.inner_cv_params = inner_cv_params
         # after a model is run this variable stores the dataset 
         # that was used to estimate the model!    
+
         self.estimation_dataset = None
+        self._aux_inner_cv = True
+        self.sw = None
 
     def copy(self):
         return copy.deepcopy(self)
@@ -200,8 +210,13 @@ class ModelSet(dict):
         print()
         print("******* ModelSet *******")
         print()
-        if self.ensemble_model:
-            self.ensemble_model.view(plot = plot)
+        print('Model weights')        
+        plt.plot(np.array(list(self.sw.values())))
+        plt.show()
+
+        for k, v in self.sw.items():
+            print(k, v)
+
         print()
         for k, m in self.items():
             print()
@@ -211,54 +226,117 @@ class ModelSet(dict):
 
 
     def add(self, key:str, model:Model = None):
-        assert self.master_model is None, "setting a model on a key when master model is defined"
-        assert self.master_models_map is None, "setting a model on a key when master models map is defined"
+        assert self.model is None, "setting a model on a key when master model is defined"
+        assert self.models_map is None, "setting a model on a key when master models map is defined"
         if key not in self:
             self[key] = model
         else:
             print(f'Warning: a model was already set for key {key}')
-    
+
+    def calc_oos_stats(self, dataset:Dataset, modelset:ModelSet, k_folds:int = 2, seq_path:bool = False, burn_fraction:float = 0.1, min_burn_points:int = 3, **kwargs):
+        
+        MIN_POINTS_OOS = 50
+        out = dict(zip(dataset.keys(), [{'mean':1, 'std':1, 'var':1, 'n':1}]*len(dataset.keys())))
+
+        if self.sw_signed:
+
+            # compute strategies OOS
+            modelset._aux_inner_cv = False # set to None
+            dataset_ = cvbt_path(
+                        dataset = dataset.copy(), 
+                        modelset = modelset.copy(),
+                        k_folds = k_folds, 
+                        seq_path = seq_path, 
+                        start_fold = 0, 
+                        burn_fraction = burn_fraction, 
+                        min_burn_points = min_burn_points
+                        )     
+            # to simplify output
+            # not taking into account correlations (to much complication, not feasible for some dataset)
+            out = {}
+            for k, data in dataset_.items():
+                if data.n > MIN_POINTS_OOS:
+                    out[k] = {'mean':np.mean(data.s), 'std':np.std(data.s), 'var':np.var(data.s), 'n':data.n}
+                else:
+                    out[k] = {'mean':0, 'std':1, 'var':1, 'n':data.n}
+        return out
+
+
+        # if self.sw_signed:
+        #     dataset_ = cvbt_path(
+        #                 dataset = dataset.copy(), 
+        #                 modelset = modelset.copy(),
+        #                 k_folds = k_folds, 
+        #                 seq_path = seq_path, 
+        #                 start_fold = 0, 
+        #                 burn_fraction = burn_fraction, 
+        #                 min_burn_points = min_burn_points
+        #                 )
+        #     keys = []
+        #     w = []
+        #     for k, data in dataset_.items():
+        #         keys.append(k)
+        #         if data.n > 50:                    
+        #             if self.sw_method == 'sr':
+        #                 ws = np.mean(data.s)/np.std(data.s)
+        #             elif self.sw_method == 'iv':
+        #                 ws = np.sign(np.mean(data.s))/np.std(data.s)
+        #             elif self.sw_method == 'g':
+        #                 ws = np.mean(data.s)/np.var(data.s)
+        #             else:
+        #                 ws = np.sign(np.mean(data.s))
+        #             ws = max(0, ws)
+        #             w.append(ws)
+        #         else:
+        #             w.append(0)
+        #     w = np.array(w)
+        #     return dict(zip(keys, w))    
+        # else:
+        #     keys = []
+        #     w = []
+        #     for k, data in dataset.items():
+        #         w.append(1)
+        #         keys.append(k)
+        #     w = np.array(w)
+        #     w = np.ones_like(w, dtype = np.float64)
+        #     return dict(zip(keys, w))  
+
     def estimate(self, dataset:Dataset, store_details:bool = True):                
         
         assert isinstance(dataset, Dataset), "ModelSet can only be used with a Dataset object"
-
         
         # estimate ensemble_model, may do nestec cv here
-        if self.ensemble_model:
-            # create a model set without the ensemble model
+        # self.sw = {}
+
+        # initialize
+        self.sw = dict(zip(dataset.keys(), np.ones(len(dataset.keys()), dtype = np.float64)))
+        
+        oos_stats = dict(zip(dataset.keys(), [{'mean':1, 'std':1, 'var':1, 'n':1}]*len(dataset.keys())))
+        if self._aux_inner_cv:
             tmp_modelset = self.copy()
-            tmp_modelset.ensemble_model = None # set to None
-            self.ensemble_model.estimate(dataset, tmp_modelset)
+            tmp_modelset._aux_inner_cv = False # set to None
+            oos_stats = self.calc_oos_stats(dataset, tmp_modelset, **self.inner_cv_params)
         
         # estimate models
-        if self.master_models_map:
-
-            # if several models apply to the same dataset (because they may be trained with a larger dataset)
-            #     we need to mix predictive distribution somehow
-
+        if self.models_map:
             # check if data keys are covered
             covered_keys = []
-            for e in self.master_models_map: covered_keys += e.get('apply_to', [])
+            for e in self.models_map: covered_keys += e.get('apply_to', [])
             covered_keys = list(set(covered_keys))
             for k, _ in dataset.items(): assert k in covered_keys, "not all elements in dataset assigned to a master_model"
-
-            for elem in self.master_models_map:
+            for elem in self.models_map:
                 apply_to = elem.get('apply_to')
-                master_model = elem.get('master_model')
-                columns = elem.get('columns')
+                #print('apply_to: ', apply_to)
+                model = elem.get('model')
 
                 data = None
                 for k, data_ in dataset.items():
                     if k in apply_to:
-
-                        if columns:
-                            # check if data_ contain all needed columns
-                            assert all(e in data_.columns for e in columns), "data does not contain the needed columns"
-                            data_ = data_._get_columns(columns)
-
                         # copy the master model
-                        k_model = master_model.copy()
+                        k_model = model.copy()
                         k_model.estimate_transforms(data_)                
+                        k_model.needed_columns = data_.columns
+                                                    
                         # transforms
                         transformed_data_ = k_model.transform(data_)                                
                         if not data: 
@@ -268,35 +346,32 @@ class ModelSet(dict):
                         # add to key
                         self[k] = k_model
 
-                if data.empty: raise Exception('data is empty. should not happen')
-                
-                # store data columns to check and filter on evaluation and live
-                master_model.needed_columns = data.columns
-                
-                # estimate master model
-                master_model.estimate_base_model(data)            
-                # estimate allocation
-                if not self.individual_alloc_norm:
-                    master_model.estimate_allocation(data)    
+                if not data.empty: #raise Exception('data is empty. should not happen')
+                    # estimate master model
+                    model.needed_columns = data.columns                
+                    # estimate master model
+                    model.estimate_base_model(data)            
 
-                # set base models and estimate allocation
-                for k, data in dataset.items():
-                    if k in apply_to:
-                        self[k].set_base_model(master_model.base_model)
-                        # set the global one (even if not estimated yet...)
-                        self[k].set_allocation(master_model.allocation)
-                        # estimate allocation for each one
-                        if self.individual_alloc_norm:
+                    # set base models and estimate allocation
+                    for k, data in dataset.items():
+                        if k in apply_to:
+                            self[k].needed_columns = model.needed_columns
+                            # need to redo here the operations                                
+                            self[k].set_base_model(model.base_model)
+                            # set the global one (even if not estimated yet...)
+                            self[k].set_allocation(model.allocation)
+                            # estimate allocation for each one
                             self[k].estimate_allocation(self[k].transform(data))
 
-        elif self.master_model:
+        elif self.model:
             # if a master model is present, apply transforms, stack the data, and estimate it
             data = None
             for k, data_ in dataset.items():
                 # copy the master model
-                k_model = self.master_model.copy()
+                k_model = self.model.copy()
                 k_model.estimate_transforms(data_)                
                 # transforms
+                k_model.needed_columns = data_.columns
                 transformed_data_ = k_model.transform(data_)                                
                 if not data: 
                     data = transformed_data_
@@ -305,31 +380,57 @@ class ModelSet(dict):
                 # add to key
                 self[k] = k_model
 
-            if data.empty: raise Exception('data is empty. should not happen')
-            # store data columns to check and filter on evaluation and live
-            self.master_model.needed_columns = data.columns
-            # estimate master model
-            self.master_model.estimate_base_model(data)            
-            # estimate allocation
-            if not self.individual_alloc_norm:
-                self.master_model.estimate_allocation(data)    
+            if not data.empty: #raise Exception('data is empty. should not happen')
+                # estimate master model
+                self.model.needed_columns = data.columns
+                self.model.estimate_base_model(data)            
 
-            # set base models and estimate allocation
-            for k, data in dataset.items():
-                self[k].needed_columns = self.master_model.needed_columns
-                self[k].set_base_model(self.master_model.base_model)
-                # set the global one (even if not estimated yet...)
-                self[k].set_allocation(self.master_model.allocation)
-                # estimate allocation for each one
-                if self.individual_alloc_norm:
+                # set base models and estimate allocation
+                for k, data in dataset.items():
+                    self[k].needed_columns = self.model.needed_columns
+                    # need to redo here the operations                                
+                    self[k].set_base_model(self.model.base_model)
+                    # set the global one (even if not estimated yet...)
+                    self[k].set_allocation(self.model.allocation)
+                    # estimate allocation for each one
                     self[k].estimate_allocation(self[k].transform(data))
 
         else:
+            #print('aqui')
             for k, data in dataset.items():
                 assert k in self, "dataset contains a key that is not defined in ModelSet. Exit.."
-                self[k].estimate(data)        
+                self[k].estimate(data)   
 
-
+        # compute strategy weights
+        for k, _ in dataset.items():
+            if k in oos_stats:                
+                # adjust sign
+                if self.sw_signed:
+                    self.sw[k] *= max(np.sign(oos_stats[k]['mean']),0)
+                # compute pw from oos statistics
+                if self.sw_method == 'k':
+                    self.sw[k] *= self[k].k
+                elif self.sw_method == 'sr':
+                    self.sw[k] = max(oos_stats[k]['mean'],0)/(oos_stats[k]['std']+1e-8)
+                elif self.sw_method == 'iv':
+                    self.sw[k] /= (oos_stats[k]['std']+1e-8)
+                elif self.sw_method == 'g':
+                    self.sw[k] = max(oos_stats[k]['mean'],0)/(oos_stats[k]['var']+1e-8)
+            else:
+                self.sw[k] = 0
+        # clip, normalize
+        tmp = np.array(list(self.sw.values()))
+        # if not equal weight, clip because of k variation
+        #if self.sw_method in ['k', 'sr', 'g', 'iv']:
+        # clipping is needed in order not to have a single strategy with very low vol and returns to dominate...
+        quantile = np.quantile(tmp, self.sw_clip_quantile, axis = 0, method = 'closest_observation')
+        # clip weights
+        tmp = np.clip(tmp, -quantile, quantile)        
+        s = np.sum(tmp)
+        if s!=0:
+            tmp /= s
+        self.sw = dict(zip(list(self.sw.keys()), tmp))
+          
         # when we train a final model we can store the dataset that was used to estimate the
         # model. If future checks are needed we can just run inference again with it!
         if store_details:
@@ -337,18 +438,17 @@ class ModelSet(dict):
 
     def evaluate(self, dataset:Dataset):
         # dataset_dict is a dict of dataset
+        #n = float(len(self.sw))
+        #nk = 0.
         for k, data in dataset.items():
-            assert k in self, "dataset contains a key that is not defined in ModelSet. Exit.."                        
             self[k].evaluate(data)   
         # set portfolio weight on dataset                
-        if self.ensemble_model:
-            for k, data in dataset.items():
-                data.pw[:] *= self.ensemble_model.get(k)        
+        for k, data in dataset.items():
+            data.sw[:] *= self.sw.get(k, 0)
         return dataset
 
     def live(self, dataset:Dataset):
         # to be used in a live setting
-
         out = {}
         for k, data in dataset.items():
             assert k in self, "dataset contains a key that is not defined in ModelSet. Exit.."                        
@@ -356,10 +456,7 @@ class ModelSet(dict):
 
         # set portfolio weight on dataset                
         for k, _ in dataset.items():
-            tmp = 1
-            if self.ensemble_model:
-                tmp = self.ensemble_model.get(k)
-            out[k].update({'pw':tmp})
+            out[k].update({'sw':self.sw.get(k, 1)})
 
         return out
 
@@ -369,7 +466,5 @@ class ModelSet(dict):
             pickle.dump(self, f, pickle.HIGHEST_PROTOCOL)
 
 
-
-
-
-
+if __name__ == '__main__':
+    pass
