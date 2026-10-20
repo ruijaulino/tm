@@ -20,6 +20,68 @@ from tm.workflows import cvbt_path
 # a model is a set of operations: transform, probabilistic modelling and allocation strategy
 
 
+# auxiliar
+
+def compute_oos_statistics(sw_signed:bool, dataset:Dataset, modelset:ModelSet, k_folds:int = 2, seq_path:bool = False, burn_fraction:float = 0.1, min_burn_points:int = 3, **kwargs):
+    
+    MIN_POINTS_OOS = 50
+    out = dict(zip(dataset.keys(), [{'mean':1, 'std':1, 'var':1, 'n':1}]*len(dataset.keys())))
+
+    if sw_signed:
+
+        # compute strategies OOS
+        modelset._aux_inner_cv = False # set to None
+        dataset_ = cvbt_path(
+                    dataset = dataset.copy(), 
+                    modelset = modelset.copy(),
+                    k_folds = k_folds, 
+                    seq_path = seq_path, 
+                    start_fold = 0, 
+                    burn_fraction = burn_fraction, 
+                    min_burn_points = min_burn_points
+                    )     
+        # to simplify output
+        # not taking into account correlations (to much complication, not feasible for some dataset)
+        out = {}
+        for k, data in dataset_.items():
+            if data.n > MIN_POINTS_OOS:
+                out[k] = {'mean':np.mean(data.s), 'std':np.std(data.s), 'var':np.var(data.s), 'n':data.n}
+            else:
+                out[k] = {'mean':0, 'std':1, 'var':1, 'n':data.n}
+    return out
+
+
+def compute_sw(dataset:Dataset, oos_stats:dict, sw_signed:bool, sw:dict, sw_clip_quantile:float):
+    # compute strategy weights
+    for k, _ in dataset.items():
+        if k in oos_stats:                
+            # adjust sign
+            if sw_signed:
+                sw[k] *= max(np.sign(oos_stats[k]['mean']),0)
+            # compute pw from oos statistics
+            if sw_method == 'k':
+                sw[k] *= oos_stats[k]['k']
+            elif sw_method == 'sr':
+                sw[k] = max(oos_stats[k]['mean'],0)/(oos_stats[k]['std']+1e-8)
+            elif sw_method == 'iv':
+                sw[k] /= (oos_stats[k]['std']+1e-8)
+            elif sw_method == 'g':
+                sw[k] = max(oos_stats[k]['mean'],0)/(oos_stats[k]['var']+1e-8)
+        else:
+            sw[k] = 0
+    # clip, normalize
+    tmp = np.array(list(sw.values()))
+    # if not equal weight, clip because of k variation
+    # clipping is needed in order not to have a single strategy with very low vol and returns to dominate...
+    quantile = np.quantile(tmp, sw_clip_quantile, axis = 0, method = 'closest_observation')
+    # clip weights
+    tmp = np.clip(tmp, -quantile, quantile)        
+    s = np.sum(tmp)
+    if s!=0:
+        tmp /= s
+    return dict(zip(list(sw.keys()), tmp))
+
+
 class Model:
 
     def __init__(self, base_model:BaseModel = None, transforms:Transforms = None, allocation:Allocation = None):
@@ -233,73 +295,6 @@ class ModelSet(dict):
         else:
             print(f'Warning: a model was already set for key {key}')
 
-    def calc_oos_stats(self, dataset:Dataset, modelset:ModelSet, k_folds:int = 2, seq_path:bool = False, burn_fraction:float = 0.1, min_burn_points:int = 3, **kwargs):
-        
-        MIN_POINTS_OOS = 50
-        out = dict(zip(dataset.keys(), [{'mean':1, 'std':1, 'var':1, 'n':1}]*len(dataset.keys())))
-
-        if self.sw_signed:
-
-            # compute strategies OOS
-            modelset._aux_inner_cv = False # set to None
-            dataset_ = cvbt_path(
-                        dataset = dataset.copy(), 
-                        modelset = modelset.copy(),
-                        k_folds = k_folds, 
-                        seq_path = seq_path, 
-                        start_fold = 0, 
-                        burn_fraction = burn_fraction, 
-                        min_burn_points = min_burn_points
-                        )     
-            # to simplify output
-            # not taking into account correlations (to much complication, not feasible for some dataset)
-            out = {}
-            for k, data in dataset_.items():
-                if data.n > MIN_POINTS_OOS:
-                    out[k] = {'mean':np.mean(data.s), 'std':np.std(data.s), 'var':np.var(data.s), 'n':data.n}
-                else:
-                    out[k] = {'mean':0, 'std':1, 'var':1, 'n':data.n}
-        return out
-
-
-        # if self.sw_signed:
-        #     dataset_ = cvbt_path(
-        #                 dataset = dataset.copy(), 
-        #                 modelset = modelset.copy(),
-        #                 k_folds = k_folds, 
-        #                 seq_path = seq_path, 
-        #                 start_fold = 0, 
-        #                 burn_fraction = burn_fraction, 
-        #                 min_burn_points = min_burn_points
-        #                 )
-        #     keys = []
-        #     w = []
-        #     for k, data in dataset_.items():
-        #         keys.append(k)
-        #         if data.n > 50:                    
-        #             if self.sw_method == 'sr':
-        #                 ws = np.mean(data.s)/np.std(data.s)
-        #             elif self.sw_method == 'iv':
-        #                 ws = np.sign(np.mean(data.s))/np.std(data.s)
-        #             elif self.sw_method == 'g':
-        #                 ws = np.mean(data.s)/np.var(data.s)
-        #             else:
-        #                 ws = np.sign(np.mean(data.s))
-        #             ws = max(0, ws)
-        #             w.append(ws)
-        #         else:
-        #             w.append(0)
-        #     w = np.array(w)
-        #     return dict(zip(keys, w))    
-        # else:
-        #     keys = []
-        #     w = []
-        #     for k, data in dataset.items():
-        #         w.append(1)
-        #         keys.append(k)
-        #     w = np.array(w)
-        #     w = np.ones_like(w, dtype = np.float64)
-        #     return dict(zip(keys, w))  
 
     def estimate(self, dataset:Dataset, store_details:bool = True):                
         
@@ -315,7 +310,7 @@ class ModelSet(dict):
         if self._aux_inner_cv:
             tmp_modelset = self.copy()
             tmp_modelset._aux_inner_cv = False # set to None
-            oos_stats = self.calc_oos_stats(dataset, tmp_modelset, **self.inner_cv_params)
+            oos_stats = compute_oos_statistics(self.sw_signed, dataset, tmp_modelset, **self.inner_cv_params)
         
         # estimate models
         if self.models_map:
@@ -399,38 +394,10 @@ class ModelSet(dict):
             #print('aqui')
             for k, data in dataset.items():
                 assert k in self, "dataset contains a key that is not defined in ModelSet. Exit.."
-                self[k].estimate(data)   
-
-        # compute strategy weights
-        for k, _ in dataset.items():
-            if k in oos_stats:                
-                # adjust sign
-                if self.sw_signed:
-                    self.sw[k] *= max(np.sign(oos_stats[k]['mean']),0)
-                # compute pw from oos statistics
-                if self.sw_method == 'k':
-                    self.sw[k] *= self[k].k
-                elif self.sw_method == 'sr':
-                    self.sw[k] = max(oos_stats[k]['mean'],0)/(oos_stats[k]['std']+1e-8)
-                elif self.sw_method == 'iv':
-                    self.sw[k] /= (oos_stats[k]['std']+1e-8)
-                elif self.sw_method == 'g':
-                    self.sw[k] = max(oos_stats[k]['mean'],0)/(oos_stats[k]['var']+1e-8)
-            else:
-                self.sw[k] = 0
-        # clip, normalize
-        tmp = np.array(list(self.sw.values()))
-        # if not equal weight, clip because of k variation
-        #if self.sw_method in ['k', 'sr', 'g', 'iv']:
-        # clipping is needed in order not to have a single strategy with very low vol and returns to dominate...
-        quantile = np.quantile(tmp, self.sw_clip_quantile, axis = 0, method = 'closest_observation')
-        # clip weights
-        tmp = np.clip(tmp, -quantile, quantile)        
-        s = np.sum(tmp)
-        if s!=0:
-            tmp /= s
-        self.sw = dict(zip(list(self.sw.keys()), tmp))
-          
+                self[k].estimate(data)  
+        # add k to oos_stats to make code simpler
+        for k, _ in self.items(): oos_stats[k]['k'] = self[k].k
+        self.sw = compute_sw(dataset, oos_stats, self.sw_signed, self.sw, self.sw_clip_quantile)
         # when we train a final model we can store the dataset that was used to estimate the
         # model. If future checks are needed we can just run inference again with it!
         if store_details:
