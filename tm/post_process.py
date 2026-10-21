@@ -6,9 +6,12 @@ not required. Existing tm.containers Data/Dataset types are still used by Paths.
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from scipy.stats import norm
 from typing import Union
 from tm.containers import Data, Dataset
 
+
+FIGSIZE = (6, 3)
 
 
 def calculate_fees(s, weights, seq_fees, pct_fee):
@@ -274,7 +277,6 @@ def analyze_portfolio(
 
 
 def _plot_portfolio(result, view_weights):
-    import matplotlib.pyplot as plt
 
     ts = result['timestamps']
     for field, title, cumulative in [
@@ -283,7 +285,7 @@ def _plot_portfolio(result, view_weights):
         ('net_lev', 'Portfolio net leverage', False),
         ('counts', 'Strategies with nonzero allocation', False),
     ]:
-        fig, ax = plt.subplots(figsize=(11, 4), constrained_layout=True)
+        fig, ax = plt.subplots(figsize=FIGSIZE, constrained_layout=True)
         values = result[field]
         if cumulative:
             values = values.cumsum(axis=0)
@@ -293,13 +295,13 @@ def _plot_portfolio(result, view_weights):
         ax.grid(alpha=.25)
         ax.legend()
 
-    fig, ax = plt.subplots(figsize=(11, 4), constrained_layout=True)
+    fig, ax = plt.subplots(figsize=FIGSIZE, constrained_layout=True)
     ax.hist(result['strategy'].ravel(), bins=50, density=True)
     ax.set_title('Return distribution')
     ax.grid(alpha=.25)
 
     if view_weights:
-        fig, ax = plt.subplots(figsize=(11, 4), constrained_layout=True)
+        fig, ax = plt.subplots(figsize=FIGSIZE, constrained_layout=True)
         colors = plt.get_cmap('tab20', len(result['strategies']))
         styles = ['-', '--', ':', '-.']
         for j, key in enumerate(result['strategies']):
@@ -370,8 +372,6 @@ def valid_strategy(s, n_boot, sr_mult, alpha = 0.05, alpha_n = 1000, pct_fee = 0
     sharpe ratio via bootstrap from the worst path
     s: numpy (n,k) array with strategy returns
     '''
-    from scipy.stats import norm
-    import matplotlib.pyplot as plt
     paths_sr = sr_mult*np.mean(s, axis = 0) / np.std(s, axis = 0)
     idx_lowest_sr = np.argmin(paths_sr)
     b_samples = block_bootstrap_sharpe(s[:,idx_lowest_sr], n_boot = n_boot, block_size = block_size)
@@ -394,7 +394,7 @@ def valid_strategy(s, n_boot, sr_mult, alpha = 0.05, alpha_n = 1000, pct_fee = 0
         if view: print(txt)     
     
     if view:
-        fig, ax = plt.subplots(figsize=(11, 4), constrained_layout=True)
+        fig, ax = plt.subplots(figsize=FIGSIZE, constrained_layout=True)
 
         ax.hist(
             b_samples, bins=50, density=True,
@@ -779,7 +779,7 @@ def plot_strategy_assembly(
     )
 
     fig_returns, ax = plt.subplots(
-        figsize=(12, 5), constrained_layout=True
+        figsize=FIGSIZE, constrained_layout=True
     )
     cumulative.plot(ax=ax)
     ax.set_title('Cumulative returns')
@@ -796,7 +796,7 @@ def plot_strategy_assembly(
     line_styles = ['-', '--', ':', '-.']
 
     fig_weights, ax = plt.subplots(
-        figsize=(12, 5), constrained_layout=True
+        figsize=FIGSIZE, constrained_layout=True
     )
 
     for j, path in enumerate(paths):
@@ -820,7 +820,7 @@ def plot_strategy_assembly(
 
     # 3. Number of available strategies
     fig_counts, ax = plt.subplots(
-        figsize=(12, 4), constrained_layout=True
+        figsize=FIGSIZE, constrained_layout=True
     )
     counts.plot(ax=ax, drawstyle='steps-post')
     ax.set_title('Available strategies')
@@ -831,7 +831,7 @@ def plot_strategy_assembly(
 
     # 4. Portfolio leverage: already multiplied by strategy weights
     fig_leverage, ax = plt.subplots(
-        figsize=(12, 5), constrained_layout=True
+        figsize=FIGSIZE, constrained_layout=True
     )
 
     # Matplotlib preserves gaps where leverage is unknown (NaN).

@@ -45,7 +45,7 @@ def soft(m, v, c, b):
 
 
 class Optimal(Allocation):
-    def __init__(self, clip_quantile=0.95, k_std = 3, diagonal=False, use_M=False, max_w = 1., demean=False, w_precision = 0.0001):
+    def __init__(self, clip_quantile=0.99, k_std = 3, diagonal=False, use_M=False, max_w = 1., demean=False, w_precision = 0.0001):
         self.clip_quantile = clip_quantile
         self.k_std = k_std
         self.diagonal = diagonal
@@ -111,9 +111,7 @@ class Optimal(Allocation):
 
         if self.w_mean is not None:
             w -= self.w_mean
-        # w *= self.aux_mult # in case there is insuficient training data
         w /= self.k
-
 
         if not in_estimate:
             # need to clip again because master k
