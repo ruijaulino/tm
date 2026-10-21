@@ -264,7 +264,7 @@ class Paths(list):
         out.columns = [f'path_{i+1}' for i in range(len(out.columns))]
         return out
 
-    def portfolio_post_process(self, pct_fee = 0., seq_fees = False, sr_mult = np.sqrt(250), n_boot = 1000, block_size = 20, alpha = 0.05, alpha_n = 1000, view_weights = True, use_pw = True, multiplier = 1, start_date = '', end_date = '', resample_to = 'B'):
+    def portfolio_post_process(self, pct_fee = 0., seq_fees = False, sr_mult = np.sqrt(250), n_boot = 1000, block_size = 20, alpha = 0.05, alpha_n = 1000, view_weights = True, use_pw = True, normalize_pw = True, multiplier = 1, start_date = '', end_date = '', resample_to = 'B'):
 
 
 
@@ -334,7 +334,8 @@ class Paths(list):
             path_w_abs_sum = path_w_abs_sum.fillna(0)
             path_w_sum = path_w_sum.fillna(0)
 
-            path_pw /= np.sum(np.abs(path_pw), axis = 1).values[:,None]
+            if normalize_pw:
+                path_pw /= np.sum(np.abs(path_pw), axis = 1).values[:,None]
             path_pw *= multiplier
             non_zero_counts = path_count_non_zero.apply(lambda row: (row != 0).sum(), axis=1)
         
