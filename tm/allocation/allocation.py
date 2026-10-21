@@ -45,11 +45,12 @@ def soft(m, v, c, b):
 
 
 class Optimal(Allocation):
-    def __init__(self, clip_quantile=0.95, k_std = 3, diagonal=False, use_M=False, max_w = 1., demean=False):
+    def __init__(self, clip_quantile=0.95, k_std = 3, diagonal=False, use_M=False, max_w = 1., demean=False, w_precision = 0.0001):
         self.clip_quantile = clip_quantile
         self.k_std = k_std
         self.diagonal = diagonal
         self.demean = demean
+        self.w_precision = w_precision
         self.use_M = use_M
         self.max_w = max_w        
         self.w_mean = None
@@ -71,21 +72,10 @@ class Optimal(Allocation):
 
     def estimate(self, mu, cov, **kwargs):                
         # make sure inputs make sense
-        # w = self.get_weight(mu, cov, live=False)
-        
         # calculate quantiles to clip weights later
-
-
         self.k = 1. # make sure it is 1
-        if mu.size > 50:
-            
-
-            w = self.get_weight(mu, cov, live=False, in_estimate = True)
-            #plt.hist(w.ravel())
-            #plt.show()
-
-            #print(w)
-            
+        if mu.size > 50:        
+            w = self.get_weight(mu, cov, live=False, in_estimate = True)            
             self.quantiles = np.quantile(np.abs(w), self.clip_quantile, axis = 0, method = 'closest_observation')
             # clip weights
             w = np.clip(w, -self.quantiles, self.quantiles)
@@ -96,21 +86,10 @@ class Optimal(Allocation):
             # calculate leverage scale
             l = np.abs(w).sum(axis=1)
             self.leverage_scale = np.std(l)
-            # self.leverage_scale = np.sqrt(np.sum(np.cov(w.T)))
             self.k = self.k_std*self.leverage_scale
-
-            #w = self.get_weight(mu, cov, live=False, in_estimate = True)
-            #print(w)
-            #plt.hist(w.ravel())
-            #plt.show()
-            
-
-            #print(sdfsd)
-            # self.k = np.quantile(np.sum(np.abs(w), axis = 1), self.quantile, method = 'closest_observation') # using this method also work for state models
             if self.k == 0: self.k = 1
         else:
             self.aux_mult = 0
-        #    self.k = 1e10
         
     def get_weight(self, mu, cov, live=False, in_estimate=False, **kwargs):
         assert mu.ndim == 2, "mu must be a matrix"
@@ -139,6 +118,9 @@ class Optimal(Allocation):
         if not in_estimate:
             # need to clip again because master k
             w = np.clip(w, -self.max_w, self.max_w)            
+
+        w = np.round(w / self.w_precision) * self.w_precision
+
 
         if not live:
             return w   
