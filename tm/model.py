@@ -24,11 +24,12 @@ from tm.workflows import cvbt_path
 
 def compute_oos_statistics(sw_signed:bool, dataset:Dataset, modelset:ModelSet, k_folds:int = 2, seq_path:bool = False, burn_fraction:float = 0.1, min_burn_points:int = 3, **kwargs):
     
+    print('inside compute_oos_statistics')
+
     MIN_POINTS_OOS = 50
     out = dict(zip(dataset.keys(), [{'mean':1, 'std':1, 'var':1, 'n':1}]*len(dataset.keys())))
 
     if sw_signed:
-
         # compute strategies OOS
         modelset._aux_inner_cv = False # set to None
         dataset_ = cvbt_path(
@@ -311,7 +312,7 @@ class ModelSet(dict):
             tmp_modelset = self.copy()
             tmp_modelset._aux_inner_cv = False # set to None
             oos_stats = compute_oos_statistics(self.sw_signed, dataset, tmp_modelset, **self.inner_cv_params)
-        
+
         # estimate models
         if self.models_map:
             # check if data keys are covered
@@ -397,11 +398,7 @@ class ModelSet(dict):
                 self[k].estimate(data)  
         # add k to oos_stats to make code simpler
         for k, _ in self.items(): oos_stats[k]['k'] = self[k].k
-        print('------------------------')
-        print(oos_stats)
         self.sw = compute_sw(dataset, oos_stats, self.sw_method, self.sw_signed, self.sw, self.sw_clip_quantile)
-        print(self.sw)
-        print('------------------------')
         # when we train a final model we can store the dataset that was used to estimate the
         # model. If future checks are needed we can just run inference again with it!
         if store_details:
