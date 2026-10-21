@@ -119,7 +119,7 @@ class Optimal(Allocation):
             # need to clip again because master k
             w = np.clip(w, -self.max_w, self.max_w)            
 
-        w = np.round(w / self.w_precision) * self.w_precision
+        w = np.trunc(w / self.w_precision) * self.w_precision
 
 
         if not live:
