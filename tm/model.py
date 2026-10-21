@@ -24,8 +24,6 @@ from tm.workflows import cvbt_path
 
 def compute_oos_statistics(sw_signed:bool, dataset:Dataset, modelset:ModelSet, k_folds:int = 2, seq_path:bool = False, burn_fraction:float = 0.1, min_burn_points:int = 3, **kwargs):
     
-    print('inside compute_oos_statistics')
-
     MIN_POINTS_OOS = 50
     out = dict(zip(dataset.keys(), [{'mean':1, 'std':1, 'var':1, 'n':1}]*len(dataset.keys())))
 
@@ -180,6 +178,7 @@ class Model:
         
         #print('evaluate: ', self.needed_columns, data.columns)
         if self._is_estimated:
+
             assert all(e in self.needed_columns for e in data.columns), "data for evaluate does not contain the needed columns"
             data_f = data._get_columns(self.needed_columns) # filter because it may come with more columns in some special cases
 
@@ -306,13 +305,11 @@ class ModelSet(dict):
 
         # initialize
         self.sw = dict(zip(dataset.keys(), np.ones(len(dataset.keys()), dtype = np.float64)))
-        
         oos_stats = dict(zip(dataset.keys(), [{'mean':1, 'std':1, 'var':1, 'n':1}]*len(dataset.keys())))
         if self._aux_inner_cv:
             tmp_modelset = self.copy()
             tmp_modelset._aux_inner_cv = False # set to None
             oos_stats = compute_oos_statistics(self.sw_signed, dataset, tmp_modelset, **self.inner_cv_params)
-
         # estimate models
         if self.models_map:
             # check if data keys are covered
@@ -354,6 +351,7 @@ class ModelSet(dict):
                             self[k].needed_columns = model.needed_columns
                             # need to redo here the operations                                
                             self[k].set_base_model(model.base_model)
+                            self[k]._is_estimated = True # is estimated!
                             # set the global one (even if not estimated yet...)
                             self[k].set_allocation(model.allocation)
                             # estimate allocation for each one
@@ -386,6 +384,7 @@ class ModelSet(dict):
                     self[k].needed_columns = self.model.needed_columns
                     # need to redo here the operations                                
                     self[k].set_base_model(self.model.base_model)
+                    self[k]._is_estimated = True # is estimated!
                     # set the global one (even if not estimated yet...)
                     self[k].set_allocation(self.model.allocation)
                     # estimate allocation for each one
