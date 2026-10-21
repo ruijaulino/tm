@@ -121,7 +121,6 @@ class Optimal(Allocation):
 
         w = np.trunc(w / self.w_precision) * self.w_precision
 
-
         if not live:
             return w   
         else:

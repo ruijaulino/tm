@@ -51,7 +51,7 @@ def compute_oos_statistics(sw_signed:bool, dataset:Dataset, modelset:ModelSet, k
     return out
 
 
-def compute_sw(dataset:Dataset, oos_stats:dict, sw_signed:bool, sw:dict, sw_clip_quantile:float):
+def compute_sw(dataset:Dataset, oos_stats:dict, sw_method:str, sw_signed:bool, sw:dict, sw_clip_quantile:float):
     # compute strategy weights
     for k, _ in dataset.items():
         if k in oos_stats:                
@@ -397,7 +397,11 @@ class ModelSet(dict):
                 self[k].estimate(data)  
         # add k to oos_stats to make code simpler
         for k, _ in self.items(): oos_stats[k]['k'] = self[k].k
-        self.sw = compute_sw(dataset, oos_stats, self.sw_signed, self.sw, self.sw_clip_quantile)
+        print('------------------------')
+        print(oos_stats)
+        self.sw = compute_sw(dataset, oos_stats, self.sw_method, self.sw_signed, self.sw, self.sw_clip_quantile)
+        print(self.sw)
+        print('------------------------')
         # when we train a final model we can store the dataset that was used to estimate the
         # model. If future checks are needed we can just run inference again with it!
         if store_details:
