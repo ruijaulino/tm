@@ -35,6 +35,7 @@ class StateModel(BaseModel):
         self.zero_states = tuple(() if zero_states is None else zero_states)
         self.use_var = use_var
         self.var_floor = var_floor
+        
         self.states_distribution = {}
         self.default_mean, self.default_var = 0, 1
         self.w_norm = self.p = 1
@@ -44,13 +45,13 @@ class StateModel(BaseModel):
         for state, distribution in self.states_distribution.items():
             print(f'State z = {state}: {distribution}')
 
-    def estimate(self, y, z, var=None, **kwargs):
+    def estimate(self, y, z, v=None, **kwargs):
         y, z = _vector(y, 'y', True), _vector(z, 'z')
         if len(y) != len(z):
             raise ValueError('y and z must have the same number of observations')
         variances = np.ones(len(y))
-        if self.use_var and var is not None:
-            variances = _vector(var, 'var', True)
+        if self.use_var and v is not None:
+            variances = _vector(v, 'var', True)
             if len(variances) != len(y) or np.any(variances <= 0):
                 raise ValueError('var must contain one positive variance per observation')
         distributions = {}
@@ -110,7 +111,7 @@ class EnsembleStateModel(BaseModel):
             print('Model for state:', i)
             model.view(plot=plot, **kwargs)
 
-    def estimate(self, y, z, var=None, **kwargs):
+    def estimate(self, y, z, v=None, **kwargs):
         z = self._states(z)
         p = z.shape[1]
         weights = np.ones(p) if self.model_weights is None else np.array(self.model_weights, dtype=float, copy=True)
@@ -124,7 +125,7 @@ class EnsembleStateModel(BaseModel):
         for i in range(p):
             template = self.base_model if self.predefined_base_models is None else self.predefined_base_models[i]
             model = copy.deepcopy(template)
-            model.estimate(y=y, z=z[:, i], var=var, **kwargs)
+            model.estimate(y=y, z=z[:, i], v=v, **kwargs)
             models.append(model)
         self.base_models, self.model_weights_ = models, weights
         return self
