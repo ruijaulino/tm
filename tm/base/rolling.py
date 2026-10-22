@@ -11,6 +11,8 @@ import numpy as np
 def _filter(values, f):
     values, f = np.asarray(values, dtype=float), np.asarray(f, dtype=float)
     if values.ndim < 1 or not np.isfinite(values).all():
+        print(values)
+        print(f)
         raise ValueError('values must be a finite array with a time axis')
     if f.ndim != 1 or f.size == 0 or not np.isfinite(f).all() or np.any(f < 0) or not np.any(f > 0):
         raise ValueError('filter must be finite, nonnegative and have positive mass')
