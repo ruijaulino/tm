@@ -81,9 +81,26 @@ def compute_sw(dataset:Dataset, oos_stats:dict, sw_method:str, sw_signed:bool, s
     return dict(zip(list(sw.keys()), tmp))
 
 
+def ema(x, alpha=0):
+    x = np.asarray(x, dtype=float)
+    if x.ndim != 1:
+        raise ValueError("x must be a 1D array")
+    if not 0 < alpha <= 1:
+        raise ValueError("alpha must be in (0, 1]")
+
+    result = np.empty_like(x)
+    if x.size == 0:
+        return result
+
+    result[0] = x[0]
+    for i in range(1, x.size):
+        result[i] = (1-alpha) * x[i] + alpha * result[i - 1]
+    return result
+
+
 class Model:
 
-    def __init__(self, base_model:BaseModel = None, transforms:Transforms = None, allocation:Allocation = None):
+    def __init__(self, base_model:BaseModel = None, transforms:Transforms = None, allocation:Allocation = None, performance_alpha=0):
         self.base_model = base_model
         self.transforms = transforms
         if not self.transforms: self.transforms = Transforms()
@@ -91,6 +108,7 @@ class Model:
         if not self.allocation: self.allocation = Optimal()
         if hasattr(self.base_model, 'use_M'):
             self.allocation.set_use_M(use_M = self.base_model.use_M)
+        self.performance_alpha = performance_alpha
         self.needed_columns = None
         self._is_estimated = False
 
@@ -195,9 +213,21 @@ class Model:
                 # transform back into appropriate scale
                 mu, cov = self.transforms.scale_back_moments(mu, cov)
                 w = self.allocation.get_weight(mu, cov)        
-                # set on original data!
+                # compute strategy
+                s = np.einsum('ij,ij->i', w, data.y)
+                
+                # evaluate if strategy has been performing
+                if self.performance_alpha!=0:
+                    s_ema = ema(s, alpha=self.performance_alpha)
+                    tmp = np.sign(s_ema[:-1])
+                    tmp[tmp<0] = 0
+                    w[0] *= 0
+                    w[1:] *= tmp[:, None]
+                    # recompute strategy
+                    s = np.einsum('ij,ij->i', w, data.y)
+
+                data.s[:] = s
                 data.w[:] = w
-                data.s[:] = np.einsum('ij,ij->i', w, data.y)
             
         return data
 
@@ -246,7 +276,8 @@ class ModelSet(dict):
                     sw_clip_quantile = 0.8,
                     sw_method = 'k', # ['k', 'sr', 'eq'], # k and sharpe have theoretical justification, equal weight for simplicity
                     sw_signed = True, # ws signed if makes money on inner cv
-                    inner_cv_params = {'k_folds':2, 'seq_path':False, 'burn_fraction':0.1, 'min_burn_points':3}
+                    inner_cv_params = {'k_folds':2, 'seq_path':False, 'burn_fraction':0.1, 'min_burn_points':3},
+
                     ):
         assert sw_method in ['k', 'sr', 'eq', 'iv', 'g'], "unknown sw_method"
         self.model = model        
